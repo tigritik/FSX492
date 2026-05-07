@@ -54,8 +54,11 @@ dkms.conf
 # debug information files
 *.dwo
 
+# for CLion
 /.idea
+compile_commands.json
 
+# for specific project files
 **/.DS_Store
 **/__pycache__/
 
