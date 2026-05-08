@@ -69,15 +69,16 @@ static int blkdev_read(
     struct image * im = dev->private;
     assert(im);
 
-    // TODO:
-
     // check if unavailable
+    if (im->fd < 0) return BLKDEV_E_UNAVAIL;
 
     // check block range
+    if (start+n > im->size) return BLKDEV_E_BADADDR;
 
     // read blocks
+    const ssize_t bytesRead = read(im->fd, buf, n*BLKDEV_BLKSZ);
     
-    return BLKDEV_E_FAULT;
+    return bytesRead == n*BLKDEV_BLKSZ ? BLKDEV_SUCCESS : BLKDEV_E_FAULT;
 }
 
 
@@ -105,12 +106,15 @@ static int blkdev_write(
     // TODO:
 
     // check if unavailable
+    if (im->fd < 0) return BLKDEV_E_UNAVAIL;
     
     // check block range
+    if (start+n > im->size) return BLKDEV_E_BADADDR;
 
     // write blocks
+    const ssize_t bytesRead = write(im->fd, buf, n*BLKDEV_BLKSZ);
 
-    return BLKDEV_E_FAULT;
+    return bytesRead == n*BLKDEV_BLKSZ ? BLKDEV_SUCCESS : BLKDEV_E_FAULT;
 }
 
 
@@ -131,7 +135,7 @@ static int blkdev_flush(struct blkdev * dev, uint32_t start, uint32_t n)
     struct image * im = dev->private;
     assert(im);
 
-    // TODO:
+    if (im->fd < 0) return BLKDEV_E_UNAVAIL;
 
     return BLKDEV_E_FAULT;
 }
@@ -157,12 +161,15 @@ static void blkdev_close(struct blkdev * dev)
     struct image * im = dev->private;
     assert(im);
 
-    // TODO:
-
     // close image file
+    if (im->fd >= 0) {
+        close(im->fd);
+        im->fd = -1;
+    }
 
     // free allocated memory
-
+    // note: no need to free ops (allocated on stack)
+    free(dev->private);
 }
 
 /**
