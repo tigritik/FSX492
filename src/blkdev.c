@@ -112,9 +112,9 @@ static int blkdev_write(
     if (start+n > im->size) return BLKDEV_E_BADADDR;
 
     // write blocks
-    const ssize_t bytesRead = write(im->fd, buf, n*BLKDEV_BLKSZ);
+    const ssize_t bytesWritten = write(im->fd, buf, n*BLKDEV_BLKSZ);
 
-    return bytesRead == n*BLKDEV_BLKSZ ? BLKDEV_SUCCESS : BLKDEV_E_FAULT;
+    return bytesWritten == n*BLKDEV_BLKSZ ? BLKDEV_SUCCESS : BLKDEV_E_FAULT;
 }
 
 
