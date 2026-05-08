@@ -76,6 +76,8 @@ static int blkdev_read(
     if (start+n > im->size) return BLKDEV_E_BADADDR;
 
     // read blocks
+    if (lseek(im->fd, start*BLKDEV_BLKSZ, SEEK_SET) != start*BLKDEV_BLKSZ)
+        return BLKDEV_E_FAULT;
     const ssize_t bytesRead = read(im->fd, buf, n*BLKDEV_BLKSZ);
     
     return bytesRead == n*BLKDEV_BLKSZ ? BLKDEV_SUCCESS : BLKDEV_E_FAULT;
@@ -103,8 +105,6 @@ static int blkdev_write(
     struct image * im = dev->private;
     assert(im);
 
-    // TODO:
-
     // check if unavailable
     if (im->fd < 0) return BLKDEV_E_UNAVAIL;
     
@@ -112,6 +112,8 @@ static int blkdev_write(
     if (start+n > im->size) return BLKDEV_E_BADADDR;
 
     // write blocks
+    if (lseek(im->fd, start*BLKDEV_BLKSZ, SEEK_SET) != start*BLKDEV_BLKSZ)
+        return BLKDEV_E_FAULT;
     const ssize_t bytesWritten = write(im->fd, buf, n*BLKDEV_BLKSZ);
 
     return bytesWritten == n*BLKDEV_BLKSZ ? BLKDEV_SUCCESS : BLKDEV_E_FAULT;
