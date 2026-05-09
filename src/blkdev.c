@@ -139,7 +139,7 @@ static int blkdev_flush(struct blkdev * dev, uint32_t start, uint32_t n)
 
     if (im->fd < 0) return BLKDEV_E_UNAVAIL;
 
-    return BLKDEV_E_FAULT;
+    return BLKDEV_SUCCESS;
 }
 
 
