@@ -809,9 +809,10 @@ static int _link(
     // take advantage of the fact that we know directories
     // only use direct block pointers to avoid a malloc
     struct fsx492_dirent entries[FSX492_N_DIRECT*FSX492_DIRENTRIES_PER_BLK] = {0};
-    for (int i = 0; i < ctx->inodes[dir_ino].blocks; i++) {
-        const uint32_t blockIdx = ctx->inodes[dir_ino].direct_blks[i];
-        if (read_blks(blockIdx, 1, &entries[i*FSX492_DIRENTRIES_PER_BLK]) < 0)
+    for (int i = 0; i < FSX492_N_DIRECT; i++) {
+        const uint32_t blockAddr = ctx->inodes[dir_ino].direct_blks[i];
+        if (validate_block(blockAddr, ctx) == -EINVAL) continue;
+        if (read_blks(blockAddr, 1, &entries[i*FSX492_DIRENTRIES_PER_BLK]) < 0)
             return -EIO;
     }
 
@@ -824,7 +825,7 @@ static int _link(
     }
 
     int newBlock = 0;
-    uint32_t newBlockNum;
+    uint32_t newBlockAddr;
 
     // we need to check if a new block needs to be allocated
     // if the first available entry lies at the start of a block
@@ -841,7 +842,7 @@ static int _link(
     }
 
     if (newBlock) {
-        if (alloc_blk(&newBlockNum, ctx) < 0) return -EIO;
+        if (alloc_blk(&newBlockAddr, ctx) < 0) return -EIO;
     }
 
     // check for duplicate name
@@ -868,7 +869,7 @@ static int _link(
     ctx->inodes[dir_ino].size += sizeof(newEntry);
     if (newBlock) {
         ctx->inodes[dir_ino].blocks++;
-        ctx->inodes[dir_ino].direct_blks[modifiedBlockIdx] = newBlockNum;
+        ctx->inodes[dir_ino].direct_blks[modifiedBlockIdx] = newBlockAddr;
     }
     ctx->inodes[dir_ino].atime = tv.tv_sec;
     ctx->inodes[dir_ino].mtime = tv.tv_sec;
