@@ -898,22 +898,73 @@ static int _unlink(
     assert(name);
     assert(dir_ino);
     assert(ctx);
-    
-    // TODO:
 
     // load entries from disk and search for the entry
+    // take advantage of the search block helper
+    // load one block at a time
+    struct fsx492_dirent entries[FSX492_DIRENTRIES_PER_BLK] = {0};
+    ssize_t direntIdx = -ENOENT; // index of the entry we're looking for
+    uint32_t blockAddr = ctx->inodes[dir_ino].direct_blks[0];
+    for (int i = 0; i < FSX492_N_DIRECT; i++) {
+        blockAddr = ctx->inodes[dir_ino].direct_blks[i];
+        if (validate_block(blockAddr, ctx) == -EINVAL) continue;
+        if (read_blks(blockAddr, 1, entries) < 0) return -EIO;
+        direntIdx = search_block(name, entries);
+        if (direntIdx == -EIO) return -EIO;
+        if (direntIdx >= 0) break;
+    }
+
+    // if the entry was not found after the entire loop ran
+    if (direntIdx == -ENOENT) return -ENOENT;
 
     // invalidate the entry
+    const uint32_t ino = entries[direntIdx].ino;
+    entries[direntIdx].valid = 0;
 
     // write back modified entries
+    if (write_blks(blockAddr, 1, entries) < 0) return -EIO;
+
+    // check if this is the last entry in the block
+    // then the block should be deallocated
+    int deAlloc = 1;
+    for (int i = 0; i < FSX492_DIRENTRIES_PER_BLK; i++) {
+        if (entries[i].valid) {
+            deAlloc = 0;
+            break;
+        }
+    }
+
+    if (deAlloc) free_blk(blockAddr, ctx);
 
     // change directory file size after writeback succeeds
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    ctx->inodes[dir_ino].size -= sizeof(struct fsx492_dirent);
+    if (deAlloc) ctx->inodes[dir_ino].blocks--;
+    ctx->inodes[dir_ino].atime = tv.tv_sec;
+    ctx->inodes[dir_ino].mtime = tv.tv_sec;
 
     // decrement inode nlink
+    struct fsx492_inode* inode = &ctx->inodes[ino];
+    inode->nlink--;
 
     // delete inode if necessary
+    if (!inode->nlink) {
+        // dealloc disk space (double then single then direct)
+        if (inode->blocks > FSX492_N_DIRECT + FSX492_PTRS_PER_BLK) {
+            const size_t n = inode->blocks - (FSX492_N_DIRECT + FSX492_PTRS_PER_BLK);
+            _free_last_indir2_blks(inode, n, ctx);
+        }
+        if (inode->blocks > FSX492_N_DIRECT) {
+            const size_t n = inode->blocks - FSX492_N_DIRECT;
+            _free_last_indir1_blks(inode, n, ctx);
+        }
+        _free_last_direct_blks(inode, inode->blocks, ctx);
+        // free inode
+        free_inode(ino, ctx);
+    }
 
-    return -ENOSYS;
+    return 0;
 }
 
 
