@@ -1003,8 +1003,10 @@ void fsx492_destroy(void * private_data)
  *
  * @return     0        on success
  *             -EIO     on failure to read disk
+ *             -EINVAL  if any component of path is invalid (inode 0)
  *             -ENOENT  if any component of path does not exist
  *             -ENOTDIR if any intermediate component of path isn't a directory
+ *             -EACCESS if permission denied (optional)
  * 
  * @note       relevent documentation from <fuse.h> included below
  *             the `struct stat` field should be populated with information
@@ -1028,13 +1030,19 @@ int fsx492_getattr(
     assert(path);
     struct context * ctx = (struct context *)fuse_get_context()->private_data;
 
-    // TODO:
-
     // lookup inode (or skip lookup if handle already open in fi)
+    uint32_t ino;
+    if (fi) ino = fi->fh;
+    else {
+        const int out = lookup_path(path, &ino, NULL);
+        if (out < 0) return out;
+    }
 
     // copy stat info to statbuf
+    struct fsx492_inode* inode = &ctx->inodes[ino];
+    copy_stat(inode, statbuf);
 
-    return -ENOSYS;
+    return 0;
 }
 
 
