@@ -809,8 +809,8 @@ static int _link(
     // take advantage of the fact that we know directories
     // only use direct block pointers to avoid a malloc
     struct fsx492_dirent entries[FSX492_N_DIRECT*FSX492_DIRENTRIES_PER_BLK] = {0};
-    for (int i = 0; i < ctx->inodes[ino].blocks; i++) {
-        const uint32_t blockIdx = ctx->inodes[ino].direct_blks[i];
+    for (int i = 0; i < ctx->inodes[dir_ino].blocks; i++) {
+        const uint32_t blockIdx = ctx->inodes[dir_ino].direct_blks[i];
         if (read_blks(blockIdx, 1, &entries[i*FSX492_DIRENTRIES_PER_BLK]) < 0)
             return -EIO;
     }
