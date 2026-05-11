@@ -1289,17 +1289,26 @@ int fsx492_open(const char * path, struct fuse_file_info * fi)
     assert(fi);
     struct context * ctx = (struct context *)fuse_get_context()->private_data;
 
-    // TODO:
-
     // lookup path and validate inode
+    const int out = lookup_path(path, &ino, NULL);
+    if (out < 0) return out;
+    if (validate_inode(ino, ctx) == -EINVAL) return -ENOTDIR;
 
     // (option: perform permissions checking)
 
     // create the file handle
 
-    // store file handle in fi->fh
+    struct fh* fh = malloc(sizeof(struct fh));
+    if (!fh) return -ENOSPC;
 
-    return -ENOSYS;
+    fh->ino = ino;
+    fh->flags = fi->flags;
+
+    // store file handle in fi->fh
+    
+    fi->fh = (uint64_t) fh;
+
+    return 0;
 }
 
 
@@ -1554,13 +1563,15 @@ int fsx492_release(const char * path, struct fuse_file_info * fi)
     fprintf(stdout, "fsx492_release: %s\n", path);
     assert(path);
 
-    // TODO:
-
     // release resources from opened file (e.g. file handle)
+    if (fi->fh) free((void *) fi->fh);
+    fi->fh = 0;
 
-    // write back metadata
+    // write back dirty metadata
+    struct context * ctx = (struct context *)fuse_get_context()->private_data;
+    const int out = writeback_metadata(ctx);
 
-    return -ENOSYS;
+    return out;
 }
 
 
@@ -1857,19 +1868,50 @@ int fsx492_rmdir(const char * path)
     fprintf(stdout, "fsx492_rmdir: %s\n", path);
     assert(path);
 
-    // TODO:
-
     // lookup directory inode
+
+    uint32_t ino;
+    uint32_t pino;
+    const int out = lookup_path(path, &ino, &pino);
+    if (out < 0) return out;
+    if (validate_inode(ino, ctx) == -EINVAL) return -ENOTDIR;
 
     // confirm inode is directory
 
+    struct context * ctx = (struct context *)fuse_get_context()->private_data;
+
+    if (!S_ISDIR(ctx->inodes[ino].mode)) return -ENOTDIR;
+
     // confirm directory is empty (only `.` and `..` entries)
+
+    struct fsx492_dirent entires[FSX492_DIRENTRIES_PER_BLK];
+    char notempt = 0;
+    for(int i = 0; i < FSX492_N_DIRECT; i++){
+        uint32_t blk_adr = ctx->inodes[ino].direct_blks[i]
+        if(validate_block(blk_adr, ctx)){
+            if(i > 0) notempt = 1; break;
+            if(read_blks(blk_adr, 1, &entires)) return -EIO;
+            for(int j = 0; j < FSX492_DIRENTRIES_PER_BLK; j++){   
+                if(entires[j].valid) notempt = 1; break;
+            }
+            if (notempt) break;
+        }
+    }
+
+    if(notempt) return -ENOTEMPTY ;
 
     // remove `.` and `..` subdirectories
 
+    if(read_blks(blk_adr, 1, &entires)) return -EIO;
+    entires[0].valid = 0;
+    entires[1].valid = 0;
+    if(write_blks(blk_adr, 1, &entires)) return -EIO;
+
+    free_blk(inodes[ino].direct_blks[0], ctx);
+
     // unlink directory inode from parent
 
-    return -ENOSYS;
+    return _unlink(basename(path), pino, ctx);
 }
 
 
