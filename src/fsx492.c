@@ -536,13 +536,12 @@ static int find_entry(
 
     // check if directory
     if(!dir_ino) return -EINVAL;
-    if(!validate_inode(dir_ino)) return -ENOENT;
-    if (!IS_ISDIR(ctx->inodes[dir_ino].mode)) return -ENOTDIR;
-
+    if(!validate_inode(dir_ino), ctx) return -ENOENT;
+    if (!S_ISDIR(ctx->inodes[dir_ino].mode)) return -ENOTDIR;
     // search directory entries in direct_blks
     struct fsx492_dirent direct[FSX492_DIRENTRIES_PER_BLK];
     for(int i = 0; i < FSX492_N_DIRECT; i++){
-        uint32_t blk_adr = ctx->inodes[dir_ino].direct_blks[i]
+        uint32_t blk_adr = ctx->inodes[dir_ino].direct_blks[i];
         if(validate_block(blk_adr, ctx) == -EINVAL) continue;
         if(read_blks(blk_adr, 1, direct)) return -EIO;
         ssize_t index = search_block(name, direct);
