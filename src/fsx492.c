@@ -1523,18 +1523,25 @@ int fsx492_opendir(const char * path, struct fuse_file_info * fi)
     fprintf(stdout, "fsx492_opendir: %s\n", path);
     assert(fi);
     struct context * ctx = (struct context *)fuse_get_context()->private_data;
-    
-    // TODO:
 
     // look up the directory inode
+    uint32_t ino;
+    const int out = lookup_path(path, &ino, NULL);
+    if (out < 0) return out;
 
     // create a new file handle
+    struct fh* fh = malloc(sizeof(struct fh));
+    if (!fh) return -ENOSPC;
+
+    fh->ino = ino;
+    fh->flags = fi->flags;
 
     // (optional) perform permissions checking
 
     // update fi with file handle
+    fi->fh = (uint64_t) fh;
 
-    return -ENOSYS;
+    return 0;
 }
 
 
