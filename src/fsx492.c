@@ -1111,8 +1111,10 @@ void fsx492_destroy(void * private_data)
  *
  * @return     0        on success
  *             -EIO     on failure to read disk
+ *             -EINVAL  if any component of path is invalid (inode 0)
  *             -ENOENT  if any component of path does not exist
  *             -ENOTDIR if any intermediate component of path isn't a directory
+ *             -EACCESS if permission denied (optional)
  * 
  * @note       relevent documentation from <fuse.h> included below
  *             the `struct stat` field should be populated with information
@@ -1136,13 +1138,19 @@ int fsx492_getattr(
     assert(path);
     struct context * ctx = (struct context *)fuse_get_context()->private_data;
 
-    // TODO:
-
     // lookup inode (or skip lookup if handle already open in fi)
+    uint32_t ino;
+    if (fi) ino = ((struct fh*) fi->fh)->ino;
+    else {
+        const int out = lookup_path(path, &ino, NULL);
+        if (out < 0) return out;
+    }
 
     // copy stat info to statbuf
+    struct fsx492_inode* inode = &ctx->inodes[ino];
+    copy_stat(inode, statbuf);
 
-    return -ENOSYS;
+    return 0;
 }
 
 
@@ -1623,18 +1631,27 @@ int fsx492_opendir(const char * path, struct fuse_file_info * fi)
     fprintf(stdout, "fsx492_opendir: %s\n", path);
     assert(fi);
     struct context * ctx = (struct context *)fuse_get_context()->private_data;
-    
-    // TODO:
 
     // look up the directory inode
+    uint32_t ino;
+    const int out = lookup_path(path, &ino, NULL);
+    if (out < 0) return out;
+    if (validate_inode(ino, ctx) == -EINVAL) return -ENOTDIR;
+    if (!S_ISDIR(ctx->inodes[ino].mode)) return -ENOTDIR;
 
     // create a new file handle
+    struct fh* fh = malloc(sizeof(struct fh));
+    if (!fh) return -ENOSPC;
+
+    fh->ino = ino;
+    fh->flags = fi->flags;
 
     // (optional) perform permissions checking
 
     // update fi with file handle
+    fi->fh = (uint64_t) fh;
 
-    return -ENOSYS;
+    return 0;
 }
 
 
@@ -1747,14 +1764,16 @@ int fsx492_releasedir(const char * path, struct fuse_file_info * fi)
 {
     fprintf(stdout, "fsx492_releasedir: %s\n", path);
     assert(fi);
-    
-    // TODO:
 
     // free allocated resources (file handle)
+    if (fi->fh) free((void *) fi->fh);
+    fi->fh = 0;
 
     // write back dirty metadata
+    struct context * ctx = (struct context *)fuse_get_context()->private_data;
+    const int out = writeback_metadata(ctx);
 
-    return -ENOSYS;
+    return out;
 }
 
 
