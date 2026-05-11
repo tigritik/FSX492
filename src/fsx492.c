@@ -1290,6 +1290,7 @@ int fsx492_open(const char * path, struct fuse_file_info * fi)
     struct context * ctx = (struct context *)fuse_get_context()->private_data;
 
     // lookup path and validate inode
+    uint32_t ino = 0;
     const int out = lookup_path(path, &ino, NULL);
     if (out < 0) return out;
     if (validate_inode(ino, ctx) == -EINVAL) return -ENOTDIR;
@@ -1933,6 +1934,9 @@ int fsx492_rmdir(const char * path)
     fprintf(stdout, "fsx492_rmdir: %s\n", path);
     assert(path);
 
+    struct context * ctx = (struct context *)fuse_get_context()->private_data;
+    assert(ctx);
+
     // lookup directory inode
 
     uint32_t ino = 0;
@@ -1944,9 +1948,6 @@ int fsx492_rmdir(const char * path)
     if (validate_inode(ino, ctx) == -EINVAL) return -ENOTDIR;
 
     // confirm inode is directory
-
-    struct context * ctx = (struct context *)fuse_get_context()->private_data;
-
     if (!S_ISDIR(ctx->inodes[ino].mode)) return -ENOTDIR;
 
     // confirm directory is empty (only `.` and `..` entries)
@@ -1954,8 +1955,8 @@ int fsx492_rmdir(const char * path)
     struct fsx492_dirent entires[FSX492_DIRENTRIES_PER_BLK];
     char notempt = 0;
     for(int i = 0; i < FSX492_N_DIRECT; i++){
-        uint32_t blk_adr = ctx->inodes[ino].direct_blks[i]
-        if(!validate_block(blk_adr, ctx)){
+        uint32_t blk_adr = ctx->inodes[ino].direct_blks[i];
+        if(blk_adr && !validate_block(blk_adr, ctx)){
             if(i > 0) {
                 notempt = 1; 
                 break;
