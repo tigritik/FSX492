@@ -1935,9 +1935,9 @@ int fsx492_rmdir(const char * path)
 
     // lookup directory inode
 
-    uint32_t ino;
-    uint32_t pino;
-    const int out = lookup_path(path, &ino, &pino);
+    uint32_t ino = 0;
+    uint32_t parent_ino = 0;
+    const int out = lookup_path(path, &ino, &parent_ino);
     if (out < 0) return out;
     if (validate_inode(ino, ctx) == -EINVAL) return -ENOTDIR;
 
@@ -1976,7 +1976,7 @@ int fsx492_rmdir(const char * path)
 
     // unlink directory inode from parent
 
-    return _unlink(basename(path), pino, ctx);
+    return _unlink(basename(path), parent_ino, ctx);
 }
 
 
