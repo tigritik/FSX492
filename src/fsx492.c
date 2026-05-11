@@ -1032,7 +1032,7 @@ int fsx492_getattr(
 
     // lookup inode (or skip lookup if handle already open in fi)
     uint32_t ino;
-    if (fi) ino = fi->fh;
+    if (fi) ino = ((struct fh*) fi->fh)->ino;
     else {
         const int out = lookup_path(path, &ino, NULL);
         if (out < 0) return out;
