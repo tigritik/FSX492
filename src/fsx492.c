@@ -503,11 +503,15 @@ static inline ssize_t search_block(
     assert(name);
     assert(entries);
 
-    // TODO:
-
     // find index of `name` parameter if found in `entries` array
 
-    return -ENOSYS;
+    for(int i = 0; i < FSX492_DIRENTRIES_PER_BLK; i++){
+        if(entries[i].valid && !strcmp(entries[i].name, name)){
+            return i;
+        }
+    }
+
+    return -ENOENT;
 }
 
 /**
@@ -530,13 +534,25 @@ static int find_entry(
     assert(ctx);
     assert(name);
 
-    // TODO:
-
     // check if directory
+    if(!dir_ino) return -EINVAL;
+    if(!validate_inode(dir_ino)) return -ENOENT;
+    if (!IS_ISDIR(ctx->inodes[dir_ino].mode)) return -ENOTDIR;
 
     // search directory entries in direct_blks
+    struct fsx492_dirent direct[FSX492_DIRENTRIES_PER_BLK];
+    for(int i = 0; i < FSX492_N_DIRECT; i++){
+        uint32_t blk_adr = ctx->inodes[dir_ino].direct_blks[i]
+        if(validate_block(blk_adr, ctx) == EINVAL) continue;
+        if(read_blks(ctx->inodes[dir_ino].direct_blks[i], 1, direct)) return -EIO;
+        ssize_t index = search_block(name, direct);
+        if(index >= 0) {
+            *ino = direct[index].ino;
+            return 0;
+        }
+    }
 
-    return -ENOSYS;
+    return -ENOENT;
 }
 
 
