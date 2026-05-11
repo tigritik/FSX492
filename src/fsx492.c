@@ -1939,6 +1939,8 @@ int fsx492_rmdir(const char * path)
     uint32_t parent_ino = 0;
     const int out = lookup_path(path, &ino, &parent_ino);
     if (out < 0) return out;
+    assert(parent_ino);
+    assert(ino);
     if (validate_inode(ino, ctx) == -EINVAL) return -ENOTDIR;
 
     // confirm inode is directory
@@ -1953,11 +1955,17 @@ int fsx492_rmdir(const char * path)
     char notempt = 0;
     for(int i = 0; i < FSX492_N_DIRECT; i++){
         uint32_t blk_adr = ctx->inodes[ino].direct_blks[i]
-        if(validate_block(blk_adr, ctx)){
-            if(i > 0) notempt = 1; break;
+        if(!validate_block(blk_adr, ctx)){
+            if(i > 0) {
+                notempt = 1; 
+                break;
+            }
             if(read_blks(blk_adr, 1, &entires)) return -EIO;
-            for(int j = 0; j < FSX492_DIRENTRIES_PER_BLK; j++){   
-                if(entires[j].valid) notempt = 1; break;
+            for(int j = 2; j < FSX492_DIRENTRIES_PER_BLK; j++){   
+                if(entires[j].valid) {
+                    notempt = 1; 
+                    break;
+                }
             }
             if (notempt) break;
         }
@@ -1967,12 +1975,13 @@ int fsx492_rmdir(const char * path)
 
     // remove `.` and `..` subdirectories
 
-    if(read_blks(blk_adr, 1, &entires)) return -EIO;
     entires[0].valid = 0;
     entires[1].valid = 0;
-    if(write_blks(blk_adr, 1, &entires)) return -EIO;
+    if(write_blks(ctx->inodes[ino].direct_blks[0], 1, &entires)) return -EIO;
 
-    free_blk(inodes[ino].direct_blks[0], ctx);
+    free_blk(ctx->inodes[ino].direct_blks[0], ctx);
+    ctx->inodes[ino].blocks--;
+    ctx->inodes[ino].nlink--;
 
     // unlink directory inode from parent
 
