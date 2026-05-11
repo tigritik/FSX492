@@ -536,7 +536,7 @@ static int find_entry(
 
     // check if directory
     if(!dir_ino) return -EINVAL;
-    if(!validate_inode(dir_ino), ctx) return -ENOENT;
+    if(!validate_inode(dir_ino, ctx)) return -ENOENT;
     if (!S_ISDIR(ctx->inodes[dir_ino].mode)) return -ENOTDIR;
     // search directory entries in direct_blks
     struct fsx492_dirent direct[FSX492_DIRENTRIES_PER_BLK];
