@@ -1654,14 +1654,16 @@ int fsx492_releasedir(const char * path, struct fuse_file_info * fi)
 {
     fprintf(stdout, "fsx492_releasedir: %s\n", path);
     assert(fi);
-    
-    // TODO:
 
     // free allocated resources (file handle)
+    if (fi->fh) free((void *) fi->fh);
+    fi->fh = 0;
 
     // write back dirty metadata
+    struct context * ctx = (struct context *)fuse_get_context()->private_data;
+    const int out = writeback_metadata(ctx);
 
-    return -ENOSYS;
+    return out;
 }
 
 
