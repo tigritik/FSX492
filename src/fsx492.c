@@ -1232,7 +1232,7 @@ int fsx492_mknod(const char * path, mode_t mode, dev_t dev)
     inode->blocks = 0;
     inode->ctime = inode->mtime = inode->atime = time(NULL);
     for (int i = 0; i < FSX492_N_DIRECT; i++) {
-        inode->direct_blks[0] = 0;
+        inode->direct_blks[i] = 0;
     }
     inode->indir1_blks = 0;
     inode->indir2_blks = 0;
@@ -1605,21 +1605,86 @@ int fsx492_mkdir(const char * path, mode_t mode)
     fprintf(stdout, "fsx492_mkdir: %s\n", path);
     struct context * ctx = (struct context *)fuse_get_context()->private_data;
 
-    // TODO:
+    // no overwriting root
+    if (!strcmp(path, "/")) return -EINVAL;
 
     // lookup parent directory path (see docs for `lookup_path`)
+    uint32_t ino = 0, parent_ino = 0;
+    const int out = lookup_path(path, &ino, &parent_ino);
+
+    switch (out) {
+        case 0:         // the path was found
+            return -EEXIST;
+        case -EIO:      // disk error
+        case -ENOTDIR:  // bad path
+        case -EINVAL:   // bad path
+            return out;
+        case -ENOENT:
+            if (!ino) {
+                // bad path
+                return out;
+            }
+            break;
+        default:
+            assert(0); // unreachable
+    }
+
+    // parent_ino should be correct now
+    assert(parent_ino);
 
     // create a new directory inode
+    if (alloc_inode(&ino, ctx) == -ENOSPC) {
+        fprintf(stderr, "fsx492_mkdir: failed to allocate inode\n");
+        return -ENOSPC;
+    }
+    assert(ino);
+
+    // initialize inode fields
+    struct fsx492_inode * inode = &ctx->inodes[ino];
+    inode->ino = ino;
+    inode->mode = mode | S_IFDIR;
+    inode->uid = getuid();
+    inode->gid = getgid();
+    inode->size = 2 * sizeof(struct fsx492_dirent);
+    inode->nlink = 0;
+    inode->blocks = 0;
+    inode->ctime = inode->mtime = inode->atime = time(NULL);
+    for (int i = 0; i < FSX492_N_DIRECT; i++) {
+        inode->direct_blks[i] = 0;
+    }
+    inode->indir1_blks = 0;
+    inode->indir2_blks = 0;
 
     // allocate space for directory entries
+    uint32_t blockAddr;
+    int ret = 0;
+    if ((ret = alloc_blk(&blockAddr, ctx)) < 0) return ret;
 
     // add `.` and `..` subdirectories
+    struct fsx492_dirent entries[FSX492_DIRENTRIES_PER_BLK] = {0};
+    entries[0].valid = 1;
+    entries[0].ino = ino; // setup . dirent
+    strncpy(entries[0].name, ".", FSX492_FILENAMESZ);
+    entries[1].valid = 1;
+    entries[1].ino = parent_ino; // setup .. dirent
+    strncpy(entries[1].name, "..", FSX492_FILENAMESZ);
+    if (write_blks(blockAddr, 1, entries) < 0) return -EIO;
+    inode->blocks++;
+    inode->nlink++; // counts the . link
+    inode->direct_blks[0] = blockAddr;
 
-    // link new directory to parent directory
+    // link new directory to parent directory (counts the second hardlink)
+    const int link_result = _link(basename(path), ino, parent_ino, ctx);
+    if (link_result < 0) {
+        free_blk(blockAddr, ctx);
+        free_inode(ino, ctx);
+        return link_result;
+    }
 
     // mark dirty inodes for writeback
+    dirty_inode(ino, ctx);
 
-    return -ENOSYS;
+    return 0;
 }
 
 
