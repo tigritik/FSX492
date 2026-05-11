@@ -1528,6 +1528,8 @@ int fsx492_opendir(const char * path, struct fuse_file_info * fi)
     uint32_t ino;
     const int out = lookup_path(path, &ino, NULL);
     if (out < 0) return out;
+    if (validate_inode(ino, ctx) == -EINVAL) return -ENOTDIR;
+    if (!S_ISDIR(ctx->inodes[ino].mode)) return -ENOTDIR;
 
     // create a new file handle
     struct fh* fh = malloc(sizeof(struct fh));
