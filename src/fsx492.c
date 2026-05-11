@@ -1232,7 +1232,7 @@ int fsx492_mknod(const char * path, mode_t mode, dev_t dev)
     inode->blocks = 0;
     inode->ctime = inode->mtime = inode->atime = time(NULL);
     for (int i = 0; i < FSX492_N_DIRECT; i++) {
-        inode->direct_blks[0] = 0;
+        inode->direct_blks[i] = 0;
     }
     inode->indir1_blks = 0;
     inode->indir2_blks = 0;
@@ -1289,17 +1289,27 @@ int fsx492_open(const char * path, struct fuse_file_info * fi)
     assert(fi);
     struct context * ctx = (struct context *)fuse_get_context()->private_data;
 
-    // TODO:
-
     // lookup path and validate inode
+    uint32_t ino = 0;
+    const int out = lookup_path(path, &ino, NULL);
+    if (out < 0) return out;
+    if (validate_inode(ino, ctx) == -EINVAL) return -ENOTDIR;
 
     // (option: perform permissions checking)
 
     // create the file handle
 
-    // store file handle in fi->fh
+    struct fh* fh = malloc(sizeof(struct fh));
+    if (!fh) return -ENOSPC;
 
-    return -ENOSYS;
+    fh->ino = ino;
+    fh->flags = fi->flags;
+
+    // store file handle in fi->fh
+    
+    fi->fh = (uint64_t) fh;
+
+    return 0;
 }
 
 
@@ -1554,13 +1564,15 @@ int fsx492_release(const char * path, struct fuse_file_info * fi)
     fprintf(stdout, "fsx492_release: %s\n", path);
     assert(path);
 
-    // TODO:
-
     // release resources from opened file (e.g. file handle)
+    if (fi->fh) free((void *) fi->fh);
+    fi->fh = 0;
 
-    // write back metadata
+    // write back dirty metadata
+    struct context * ctx = (struct context *)fuse_get_context()->private_data;
+    const int out = writeback_metadata(ctx);
 
-    return -ENOSYS;
+    return out;
 }
 
 
@@ -1594,21 +1606,86 @@ int fsx492_mkdir(const char * path, mode_t mode)
     fprintf(stdout, "fsx492_mkdir: %s\n", path);
     struct context * ctx = (struct context *)fuse_get_context()->private_data;
 
-    // TODO:
+    // no overwriting root
+    if (!strcmp(path, "/")) return -EINVAL;
 
     // lookup parent directory path (see docs for `lookup_path`)
+    uint32_t ino = 0, parent_ino = 0;
+    const int out = lookup_path(path, &ino, &parent_ino);
+
+    switch (out) {
+        case 0:         // the path was found
+            return -EEXIST;
+        case -EIO:      // disk error
+        case -ENOTDIR:  // bad path
+        case -EINVAL:   // bad path
+            return out;
+        case -ENOENT:
+            if (!ino) {
+                // bad path
+                return out;
+            }
+            break;
+        default:
+            assert(0); // unreachable
+    }
+
+    // parent_ino should be correct now
+    assert(parent_ino);
 
     // create a new directory inode
+    if (alloc_inode(&ino, ctx) == -ENOSPC) {
+        fprintf(stderr, "fsx492_mkdir: failed to allocate inode\n");
+        return -ENOSPC;
+    }
+    assert(ino);
+
+    // initialize inode fields
+    struct fsx492_inode * inode = &ctx->inodes[ino];
+    inode->ino = ino;
+    inode->mode = mode | S_IFDIR;
+    inode->uid = getuid();
+    inode->gid = getgid();
+    inode->size = 2 * sizeof(struct fsx492_dirent);
+    inode->nlink = 0;
+    inode->blocks = 0;
+    inode->ctime = inode->mtime = inode->atime = time(NULL);
+    for (int i = 0; i < FSX492_N_DIRECT; i++) {
+        inode->direct_blks[i] = 0;
+    }
+    inode->indir1_blks = 0;
+    inode->indir2_blks = 0;
 
     // allocate space for directory entries
+    uint32_t blockAddr;
+    int ret = 0;
+    if ((ret = alloc_blk(&blockAddr, ctx)) < 0) return ret;
 
     // add `.` and `..` subdirectories
+    struct fsx492_dirent entries[FSX492_DIRENTRIES_PER_BLK] = {0};
+    entries[0].valid = 1;
+    entries[0].ino = ino; // setup . dirent
+    strncpy(entries[0].name, ".", FSX492_FILENAMESZ);
+    entries[1].valid = 1;
+    entries[1].ino = parent_ino; // setup .. dirent
+    strncpy(entries[1].name, "..", FSX492_FILENAMESZ);
+    if (write_blks(blockAddr, 1, entries) < 0) return -EIO;
+    inode->blocks++;
+    inode->nlink++; // counts the . link
+    inode->direct_blks[0] = blockAddr;
 
-    // link new directory to parent directory
+    // link new directory to parent directory (counts the second hardlink)
+    const int link_result = _link(basename(path), ino, parent_ino, ctx);
+    if (link_result < 0) {
+        free_blk(blockAddr, ctx);
+        free_inode(ino, ctx);
+        return link_result;
+    }
 
     // mark dirty inodes for writeback
+    dirty_inode(ino, ctx);
 
-    return -ENOSYS;
+    return 0;
 }
 
 
@@ -1857,19 +1934,59 @@ int fsx492_rmdir(const char * path)
     fprintf(stdout, "fsx492_rmdir: %s\n", path);
     assert(path);
 
-    // TODO:
+    struct context * ctx = (struct context *)fuse_get_context()->private_data;
+    assert(ctx);
 
     // lookup directory inode
 
+    uint32_t ino = 0;
+    uint32_t parent_ino = 0;
+    const int out = lookup_path(path, &ino, &parent_ino);
+    if (out < 0) return out;
+    assert(parent_ino);
+    assert(ino);
+    if (validate_inode(ino, ctx) == -EINVAL) return -ENOTDIR;
+
     // confirm inode is directory
+    if (!S_ISDIR(ctx->inodes[ino].mode)) return -ENOTDIR;
 
     // confirm directory is empty (only `.` and `..` entries)
 
+    struct fsx492_dirent entires[FSX492_DIRENTRIES_PER_BLK];
+    char notempt = 0;
+    for(int i = 0; i < FSX492_N_DIRECT; i++){
+        uint32_t blk_adr = ctx->inodes[ino].direct_blks[i];
+        if(blk_adr && !validate_block(blk_adr, ctx)){
+            if(i > 0) {
+                notempt = 1; 
+                break;
+            }
+            if(read_blks(blk_adr, 1, &entires)) return -EIO;
+            for(int j = 2; j < FSX492_DIRENTRIES_PER_BLK; j++){   
+                if(entires[j].valid) {
+                    notempt = 1; 
+                    break;
+                }
+            }
+            if (notempt) break;
+        }
+    }
+
+    if(notempt) return -ENOTEMPTY ;
+
     // remove `.` and `..` subdirectories
+
+    entires[0].valid = 0;
+    entires[1].valid = 0;
+    if(write_blks(ctx->inodes[ino].direct_blks[0], 1, &entires)) return -EIO;
+
+    free_blk(ctx->inodes[ino].direct_blks[0], ctx);
+    ctx->inodes[ino].blocks--;
+    ctx->inodes[ino].nlink--;
 
     // unlink directory inode from parent
 
-    return -ENOSYS;
+    return _unlink(basename(path), parent_ino, ctx);
 }
 
 
