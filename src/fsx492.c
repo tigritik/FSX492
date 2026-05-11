@@ -803,7 +803,13 @@ static int _link(
     if (strlen(name) >= FSX492_FILENAMESZ) return -EINVAL;
 
     // validate directory inode
+    if (validate_inode(dir_ino, ctx) == -EINVAL) return -ENOTDIR;
     if (!S_ISDIR(ctx->inodes[dir_ino].mode)) return -ENOTDIR;
+
+    // check for duplicate name
+    const int out = find_entry(name, dir_ino, NULL, ctx);
+    if (out == 0) return -EEXIST;
+    if (out != -ENOENT) return out;
     
     // load directory entries from disk
     // take advantage of the fact that we know directories
@@ -823,32 +829,6 @@ static int _link(
         if (firstFreeIndex == FSX492_N_DIRECT*FSX492_DIRENTRIES_PER_BLK)
             return -ENOSPC;
     }
-
-    int newBlock = 0;
-    uint32_t newBlockAddr;
-
-    // we need to check if a new block needs to be allocated
-    // if the first available entry lies at the start of a block
-    // it's possible that the entire block is invalid (then alloc)
-    // it's also possible that this is just a gap created by a removal
-    if (firstFreeIndex % FSX492_DIRENTRIES_PER_BLK == 0) {
-        newBlock = 1;
-        for (int i = 0; i < FSX492_DIRENTRIES_PER_BLK; i++) {
-            if (entries[firstFreeIndex+i].valid) {
-                newBlock = 0;
-                break;
-            }
-        }
-    }
-
-    if (newBlock) {
-        if (alloc_blk(&newBlockAddr, ctx) < 0) return -EIO;
-    }
-
-    // check for duplicate name
-    const int out = find_entry(name, dir_ino, NULL, ctx);
-    if (out == 0) return -EEXIST;
-    if (out != -ENOENT) return out;
     
     // add the info to the entry
     struct fsx492_dirent newEntry = {
@@ -859,20 +839,24 @@ static int _link(
 
     // write back modified entry to disk
     const int modifiedBlockIdx = firstFreeIndex / FSX492_DIRENTRIES_PER_BLK;
-    const uint32_t modifiedBlock = ctx->inodes[dir_ino].direct_blks[modifiedBlockIdx];
-    if (write_blks(modifiedBlock, 1, &entries[modifiedBlockIdx*FSX492_DIRENTRIES_PER_BLK]) < 0)
+    uint32_t modifiedBlockAddr = ctx->inodes[dir_ino].direct_blks[modifiedBlockIdx];
+
+    // we need to check if a new block needs to be allocated
+    const int newBlock = validate_block(modifiedBlockAddr, ctx);
+
+    if (newBlock) {
+        if (alloc_blk(&modifiedBlockAddr, ctx) < 0) return -EIO;
+    }
+    if (write_blks(modifiedBlockAddr, 1, &entries[modifiedBlockIdx*FSX492_DIRENTRIES_PER_BLK]) < 0)
         return -EIO;
 
     // modify directory inode
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
     ctx->inodes[dir_ino].size += sizeof(newEntry);
     if (newBlock) {
         ctx->inodes[dir_ino].blocks++;
-        ctx->inodes[dir_ino].direct_blks[modifiedBlockIdx] = newBlockAddr;
+        ctx->inodes[dir_ino].direct_blks[modifiedBlockIdx] = modifiedBlockAddr;
     }
-    ctx->inodes[dir_ino].atime = tv.tv_sec;
-    ctx->inodes[dir_ino].mtime = tv.tv_sec;
+    ctx->inodes[dir_ino].atime = ctx->inodes[dir_ino].mtime = time(NULL);
 
     // modify entry inode
     ctx->inodes[ino].nlink++;
@@ -938,12 +922,9 @@ static int _unlink(
     if (deAlloc) free_blk(blockAddr, ctx);
 
     // change directory file size after writeback succeeds
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
     ctx->inodes[dir_ino].size -= sizeof(struct fsx492_dirent);
     if (deAlloc) ctx->inodes[dir_ino].blocks--;
-    ctx->inodes[dir_ino].atime = tv.tv_sec;
-    ctx->inodes[dir_ino].mtime = tv.tv_sec;
+    ctx->inodes[dir_ino].atime = ctx->inodes[dir_ino].mtime = time(NULL);
 
     // decrement inode nlink
     struct fsx492_inode* inode = &ctx->inodes[ino];
