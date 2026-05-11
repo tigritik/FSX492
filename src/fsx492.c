@@ -815,25 +815,69 @@ static int _link(
     assert(dir_ino);
     assert(ctx);
 
-    // TODO:
-
     // validate name length
+    if (strlen(name) >= FSX492_FILENAMESZ) return -EINVAL;
 
     // validate directory inode
+    if (validate_inode(dir_ino, ctx) == -EINVAL) return -ENOTDIR;
+    if (!S_ISDIR(ctx->inodes[dir_ino].mode)) return -ENOTDIR;
+
+    // check for duplicate name
+    const int out = find_entry(name, dir_ino, NULL, ctx);
+    if (out == 0) return -EEXIST;
+    if (out != -ENOENT) return out;
     
     // load directory entries from disk
+    // take advantage of the fact that we know directories
+    // only use direct block pointers to avoid a malloc
+    struct fsx492_dirent entries[FSX492_N_DIRECT*FSX492_DIRENTRIES_PER_BLK] = {0};
+    for (int i = 0; i < FSX492_N_DIRECT; i++) {
+        const uint32_t blockAddr = ctx->inodes[dir_ino].direct_blks[i];
+        if (validate_block(blockAddr, ctx) == -EINVAL) continue;
+        if (read_blks(blockAddr, 1, &entries[i*FSX492_DIRENTRIES_PER_BLK]) < 0)
+            return -EIO;
+    }
 
     // find a free directory entry (allocate new blocks as needed)
+    int firstFreeIndex = 0;
+    while (entries[firstFreeIndex].valid) {
+        firstFreeIndex++;
+        if (firstFreeIndex == FSX492_N_DIRECT*FSX492_DIRENTRIES_PER_BLK)
+            return -ENOSPC;
+    }
     
     // add the info to the entry
+    struct fsx492_dirent newEntry = {
+        .valid = 1, .ino = ino
+    };
+    strncpy(newEntry.name, name, FSX492_FILENAMESZ);
+    entries[firstFreeIndex] = newEntry;
 
     // write back modified entry to disk
+    const int modifiedBlockIdx = firstFreeIndex / FSX492_DIRENTRIES_PER_BLK;
+    uint32_t modifiedBlockAddr = ctx->inodes[dir_ino].direct_blks[modifiedBlockIdx];
+
+    // we need to check if a new block needs to be allocated
+    const int newBlock = validate_block(modifiedBlockAddr, ctx);
+
+    if (newBlock) {
+        if (alloc_blk(&modifiedBlockAddr, ctx) < 0) return -EIO;
+    }
+    if (write_blks(modifiedBlockAddr, 1, &entries[modifiedBlockIdx*FSX492_DIRENTRIES_PER_BLK]) < 0)
+        return -EIO;
 
     // modify directory inode
+    ctx->inodes[dir_ino].size += sizeof(newEntry);
+    if (newBlock) {
+        ctx->inodes[dir_ino].blocks++;
+        ctx->inodes[dir_ino].direct_blks[modifiedBlockIdx] = modifiedBlockAddr;
+    }
+    ctx->inodes[dir_ino].atime = ctx->inodes[dir_ino].mtime = time(NULL);
 
     // modify entry inode
+    ctx->inodes[ino].nlink++;
 
-    return -ENOSYS;
+    return 0;
 }
 
 
@@ -855,22 +899,70 @@ static int _unlink(
     assert(name);
     assert(dir_ino);
     assert(ctx);
-    
-    // TODO:
 
     // load entries from disk and search for the entry
+    // take advantage of the search block helper
+    // load one block at a time
+    struct fsx492_dirent entries[FSX492_DIRENTRIES_PER_BLK] = {0};
+    ssize_t direntIdx = -ENOENT; // index of the entry we're looking for
+    uint32_t blockAddr = ctx->inodes[dir_ino].direct_blks[0];
+    for (int i = 0; i < FSX492_N_DIRECT; i++) {
+        blockAddr = ctx->inodes[dir_ino].direct_blks[i];
+        if (validate_block(blockAddr, ctx) == -EINVAL) continue;
+        if (read_blks(blockAddr, 1, entries) < 0) return -EIO;
+        direntIdx = search_block(name, entries);
+        if (direntIdx == -EIO) return -EIO;
+        if (direntIdx >= 0) break;
+    }
+
+    // if the entry was not found after the entire loop ran
+    if (direntIdx == -ENOENT) return -ENOENT;
 
     // invalidate the entry
+    const uint32_t ino = entries[direntIdx].ino;
+    entries[direntIdx].valid = 0;
 
     // write back modified entries
+    if (write_blks(blockAddr, 1, entries) < 0) return -EIO;
+
+    // check if this is the last entry in the block
+    // then the block should be deallocated
+    int deAlloc = 1;
+    for (int i = 0; i < FSX492_DIRENTRIES_PER_BLK; i++) {
+        if (entries[i].valid) {
+            deAlloc = 0;
+            break;
+        }
+    }
+
+    if (deAlloc) free_blk(blockAddr, ctx);
 
     // change directory file size after writeback succeeds
+    ctx->inodes[dir_ino].size -= sizeof(struct fsx492_dirent);
+    if (deAlloc) ctx->inodes[dir_ino].blocks--;
+    ctx->inodes[dir_ino].atime = ctx->inodes[dir_ino].mtime = time(NULL);
 
     // decrement inode nlink
+    struct fsx492_inode* inode = &ctx->inodes[ino];
+    inode->nlink--;
 
     // delete inode if necessary
+    if (!inode->nlink) {
+        // dealloc disk space (double then single then direct)
+        if (inode->blocks > FSX492_N_DIRECT + FSX492_PTRS_PER_BLK) {
+            const size_t n = inode->blocks - (FSX492_N_DIRECT + FSX492_PTRS_PER_BLK);
+            _free_last_indir2_blks(inode, n, ctx);
+        }
+        if (inode->blocks > FSX492_N_DIRECT) {
+            const size_t n = inode->blocks - FSX492_N_DIRECT;
+            _free_last_indir1_blks(inode, n, ctx);
+        }
+        _free_last_direct_blks(inode, inode->blocks, ctx);
+        // free inode
+        free_inode(ino, ctx);
+    }
 
-    return -ENOSYS;
+    return 0;
 }
 
 
