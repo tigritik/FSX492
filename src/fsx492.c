@@ -543,11 +543,11 @@ static int find_entry(
     struct fsx492_dirent direct[FSX492_DIRENTRIES_PER_BLK];
     for(int i = 0; i < FSX492_N_DIRECT; i++){
         uint32_t blk_adr = ctx->inodes[dir_ino].direct_blks[i]
-        if(validate_block(blk_adr, ctx) == EINVAL) continue;
-        if(read_blks(ctx->inodes[dir_ino].direct_blks[i], 1, direct)) return -EIO;
+        if(validate_block(blk_adr, ctx) == -EINVAL) continue;
+        if(read_blks(blk_adr, 1, direct)) return -EIO;
         ssize_t index = search_block(name, direct);
-        if(index >= 0) {
-            *ino = direct[index].ino;
+        if(index >= 0) { 
+            if(ino) *ino = direct[index].ino;
             return 0;
         }
     }
