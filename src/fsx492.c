@@ -1873,8 +1873,8 @@ int fsx492_link(const char * oldpath, const char * newpath)
     assert(newpath);
 
     // lookup paths
-    uint32_t ino = 0
-    uint32_t target_ino = 0
+    uint32_t ino = 0;
+    uint32_t target_ino = 0;
     int out = lookup_path(oldpath, &ino, NULL);
     if(out < 0): return out;
     out = lookup_path(newpath, NULL, &target_ino);
@@ -1894,10 +1894,16 @@ int fsx492_link(const char * oldpath, const char * newpath)
         default:
             assert(0); // unreachable
     }
+    assert(ino);
+    assert(target_ino);
+
+    struct context * ctx = (struct context *)fuse_get_context()->private_data;
+
+    if (ctx->inodex[ino].nlinks == UINT16_MAX) return -EMLINK;
 
     // link old inode to new directory inode
 
-        _link(basename(newpath), ino, target_ino, (struct context *)fuse_get_context()->private_data);
+    return _link(basename(newpath), ino, target_ino, ctx);
 
 }
 
