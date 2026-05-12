@@ -1010,6 +1010,7 @@ struct fuse_operations fsx492_ops = {
 void * fsx492_init(struct fuse_conn_info * conn, struct fuse_config * cfg)
 {
     fprintf(stdout, "fsx492_init\n");
+    cfg->use_ino = 1;   
     assert(disk);
     assert(disk->ops);
     struct fsx492_superblk sb;
