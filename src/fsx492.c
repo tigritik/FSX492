@@ -1872,11 +1872,14 @@ int fsx492_link(const char * oldpath, const char * newpath)
     assert(oldpath);
     assert(newpath);
 
+    struct context * ctx = (struct context *)fuse_get_context()->private_data;
+
     // lookup paths
     uint32_t ino = 0;
     uint32_t target_ino = 0;
     int out = lookup_path(oldpath, &ino, NULL);
-    if(out < 0): return out;
+    if(out < 0) return out;
+    if(S_ISDIR(ctx->inodex[ino].mode)) return EINVAL;
     out = lookup_path(newpath, NULL, &target_ino);
     switch (out) {
         case 0:         // the path was found
@@ -1896,8 +1899,6 @@ int fsx492_link(const char * oldpath, const char * newpath)
     }
     assert(ino);
     assert(target_ino);
-
-    struct context * ctx = (struct context *)fuse_get_context()->private_data;
 
     if (ctx->inodex[ino].nlinks == UINT16_MAX) return -EMLINK;
 
