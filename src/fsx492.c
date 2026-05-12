@@ -1530,28 +1530,37 @@ int fsx492_write(const char * path, const char * buf, size_t size,
     if (offset > ctx->inodes[ino].size) return -EINVAL;
 
     size_t bytesToWrite = size;
-    size_t bytesWritten = 0;
+    size_t bytesWritten = offset % FSX492_BLKSZ;
     size_t startBlockIndex = offset / FSX492_BLKSZ;
     char blockBuffer[FSX492_BLKSZ];
-    uint32_t blockAddr = ctx->inodes[ino].direct_blks[startBlockIndex];
+    uint32_t blockAddr = 0;
+    size_t numW = FSX492_BLKSZ - offset;
 
     // write to direct blocks if needed (allocate space as needed)
     while (bytesToWrite  && startBlockIndex < FSX492_N_DIRECT) {
+        blockAddr = ctx->inodes[ino].direct_blks[startBlockIndex];
         if (blockAddr && validate_block(blockAddr, ctx) == -EINVAL) {
             const uint32_t alloc_res = alloc_blk(&blockAddr, ctx);
             if (alloc_res < 0) return alloc_res;
             ctx->inodes[ino].blocks++;
         }
-        if (bytesWritten % FSX492_BLKSZ) {
+         if (bytesToWrite < FSX492_BLKSZ){
+
+            if (read_blks(blockAddr, 1, blockBuffer) < 0) return -EIO;
+            memcpy(blockBuffer, &buf[bytesWritten], bytesToWrite);
+            if (write_blks(blockAddr, 1, blockBuffer) < 0) return -EIO;
+            bytesWritten += (bytesToWrite % FSX492_BLKSZ);
+
+        } else if (bytesWritten % FSX492_BLKSZ) {
+            numW = FSX492_BLKSZ - offset;
             if (read_blks(blockAddr, 1, blockBuffer) < 0) return -EIO;
             memcpy(blockBuffer, &buf[bytesWritten], FSX492_BLKSZ);
             if (write_blks(blockAddr, 1, blockBuffer) < 0) return -EIO;
             bytesWritten += FSX492_BLKSZ - (bytesWritten % FSX492_BLKSZ);
-            offset += bytesWritten;
-        } else {
-
+        }  else {
             if (write_blks(blockAddr, 1, &buf[bytesWritten]) < 0) return -EIO;
-            offset += FSX492_BLKSZ;
+            bytesWritten += FSX492_BLKSZ;
+
         }
 
         startBlockIndex++;
@@ -1583,15 +1592,15 @@ int fsx492_write(const char * path, const char * buf, size_t size,
             ctx->inodes[ino].indir1_blks++;
         }
 
-        if(offset % FSX492_BLKSZ){
+        if(bytesWritten % FSX492_BLKSZ){
 
-            size_t numW = FSX492_BLKSZ - offset;
+            numW = FSX492_BLKSZ - offset;
             if(read_blks(blks[offset/FSX492_BLKSZ - FSX492_N_DIRECT] , 1, blockBuffer)) return -EIO;
             memcpy(blockBuffer, &buf[bytesWritten], numW);
 
         } else {
 
-            
+
 
         }
 
