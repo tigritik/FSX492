@@ -910,7 +910,7 @@ static int _unlink(
     uint32_t blockAddr = ctx->inodes[dir_ino].direct_blks[0];
     for (int i = 0; i < FSX492_N_DIRECT; i++) {
         blockAddr = ctx->inodes[dir_ino].direct_blks[i];
-        if (validate_block(blockAddr, ctx) == -EINVAL) continue;
+        if (!blockAddr || validate_block(blockAddr, ctx) == -EINVAL) continue;
         if (read_blks(blockAddr, 1, entries) < 0) return -EIO;
         direntIdx = search_block(name, entries);
         if (direntIdx == -EIO) return -EIO;
@@ -939,8 +939,10 @@ static int _unlink(
 
     if (deAlloc) free_blk(blockAddr, ctx);
 
+
     // change directory file size after writeback succeeds
     ctx->inodes[dir_ino].size -= sizeof(struct fsx492_dirent);
+    ctx->inodes[dir_ino].direct_blks[direntIdx] = {0};
     if (deAlloc) ctx->inodes[dir_ino].blocks--;
     ctx->inodes[dir_ino].atime = ctx->inodes[dir_ino].mtime = time(NULL);
 
@@ -963,6 +965,8 @@ static int _unlink(
         // free inode
         free_inode(ino, ctx);
     }
+
+    dirty_inode(dir_ino, ctx);
 
     return 0;
 }
