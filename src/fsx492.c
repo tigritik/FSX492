@@ -1863,7 +1863,7 @@ int fsx492_releasedir(const char * path, struct fuse_file_info * fi)
  *             -EMLINK  if oldpath has too many links
  *             -ENOENT  if the oldpath file does not exist
  *             -ENOTDIR if any component of old or new path is not a directory
- *             -EPERM   if the oldpath ends with a directory
+ *             -EPERM   if the oldpath is a directory
  *             -ENOSPC  if directory full
  *             -EINVAL  if name too long
  */
@@ -1874,14 +1874,16 @@ int fsx492_link(const char * oldpath, const char * newpath)
     assert(newpath);
 
     struct context * ctx = (struct context *)fuse_get_context()->private_data;
+    assert(ctx);
 
     // lookup paths
     uint32_t ino = 0;
     uint32_t target_ino = 0;
+    uint32_t temp_ino = 0;
     int out = lookup_path(oldpath, &ino, NULL);
     if(out < 0) return out;
     if(S_ISDIR(ctx->inodex[ino].mode)) return -EPERM;
-    out = lookup_path(newpath, NULL, &target_ino);
+    out = lookup_path(newpath, temp_ino, &target_ino);
     switch (out) {
         case 0:         // the path was found
             return -EEXIST;
@@ -1890,7 +1892,7 @@ int fsx492_link(const char * oldpath, const char * newpath)
         case -EINVAL:   // bad path
             return out;
         case -ENOENT:
-            if (!ino) {
+            if (!temp_ino) {
                 // bad path
                 return out;
             }
@@ -1906,7 +1908,6 @@ int fsx492_link(const char * oldpath, const char * newpath)
     // link old inode to new directory inode
 
     return _link(basename(newpath), ino, target_ino, ctx);
-
 }
 
 
