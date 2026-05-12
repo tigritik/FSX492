@@ -2124,13 +2124,21 @@ int fsx492_chmod(const char * path, mode_t mode, struct fuse_file_info * fi)
     fprintf(stdout, "fsx492_chmod: %s\n", path);
     assert(path);
 
-    // TODO:
+    struct context * ctx = (struct context *)fuse_get_context()->private_data;
+    assert(ctx);
 
     // lookup inode
+    uint32_t ino;
+    if (fi) ino = ((struct fh*) fi->fh)->ino;
+    else {
+        const int out = lookup_path(path, &ino, NULL);
+        if (out < 0) return out;
+    }
 
     // update mode bits (directories and regular files only)
+    ctx->inodes[ino].mode = mode;
 
-    return -ENOSYS;
+    return 0;
 }
 
 
