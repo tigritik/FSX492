@@ -1545,6 +1545,7 @@ int fsx492_write(const char * path, const char * buf, size_t size,
             const uint32_t alloc_res = alloc_blk(&blockAddr, ctx);
             if (alloc_res < 0) return alloc_res;
             ctx->inodes[ino].blocks++;
+            ctx->inodes[ino].direct_blks[startBlockIndex] = blockAddr;
         }
 
         if (bytesToWrite < FSX492_BLKSZ){
@@ -1569,7 +1570,7 @@ int fsx492_write(const char * path, const char * buf, size_t size,
         }  else {
             if (write_blks(blockAddr, 1, &buf[bytesWritten]) < 0) return -EIO;
             bytesWritten += FSX492_BLKSZ;
-            bytesToWrite -= numW;
+            bytesToWrite -= FSX492_BLKSZ;
         }
 
         startBlockIndex++;
@@ -1578,6 +1579,7 @@ int fsx492_write(const char * path, const char * buf, size_t size,
 
     // write to indir1 blocks if needed (allocate space as needed)
 
+    dirty_inode(ino, ctx);
     
     uint32_t blks[FSX492_PTRS_PER_BLK];
 
@@ -1626,7 +1628,7 @@ int fsx492_write(const char * path, const char * buf, size_t size,
         }  else {
             if (write_blks(blockAddr, 1, &buf[bytesWritten]) < 0) return -EIO;
             bytesWritten += FSX492_BLKSZ;
-            bytesToWrite -= numW;
+            bytesToWrite -= FSX492_BLKSZ;
 
         }
 
@@ -1642,6 +1644,7 @@ int fsx492_write(const char * path, const char * buf, size_t size,
     uint32_t blks2[FSX492_PTRS_PER_BLK];
 
     blockAddr = ctx->inodes[ino].indir2_blks;
+    uint32_t blockAddr1 =  0;
 
     if (blockAddr && validate_block(blockAddr, ctx) == -EINVAL && bytesToWrite) {
             const uint32_t alloc_res = alloc_blk(&blockAddr, ctx);
@@ -1655,19 +1658,29 @@ int fsx492_write(const char * path, const char * buf, size_t size,
 
     while (bytesToWrite && start_Block_Index < FSX492_PTRS_PER_BLK*FSX492_PTRS_PER_BLK + FSX492_PTRS_PER_BLK + FSX492_N_DIRECT){
 
-        if (blockAddr && validate_block(blockAddr, ctx) == -EINVAL && bytesToWrite) {
-            const uint32_t alloc_res = alloc_blk(&blockAddr, ctx);
-            if (alloc_res < 0) return alloc_res;
-            ctx->inodes[ino].blocks++;
-            ctx->inodes[ino].indir2_blks = blockAddr;
+        if(!((start_Block_Index - (FSX492_N_DIRECT)) % FSX492_PTRS_PER_BLK)){
+            if (write_blks(blockAddr1, 1, blks) < 0) return -EIO;
         }
 
-        blockAddr = blks[start_Block_Index - (FSX492_N_DIRECT + FSX492_PTRS_PER_BLK)];
+        blockAddr1 = blks2[(start_Block_Index - FSX492_PTRS_PER_BLK - FSX492_N_DIRECT) / FSX492_PTRS_PER_BLK]
+
+        if (blockAddr1 && validate_block(blockAddr1, ctx) == -EINVAL) {
+            const uint32_t alloc_res = alloc_blk(&blockAddr1, ctx);
+            if (alloc_res < 0) return alloc_res;
+            ctx->inodes[ino].blocks++;
+            blks2[(start_Block_Index - FSX492_PTRS_PER_BLK - FSX492_N_DIRECT) / FSX492_PTRS_PER_BLK] = blockAddr1;
+        }
+
+        if (read_blks(ctx->inodes[ino].indir1_blks, 1, (void *)blks) < 0) {
+        return -EIO;
+        }
+
+        blockAddr = blks[(start_Block_Index - (FSX492_N_DIRECT)) % FSX492_PTRS_PER_BLK];
         if (blockAddr && validate_block(blockAddr, ctx) == -EINVAL) {
             const uint32_t alloc_res = alloc_blk(&blockAddr, ctx);
             if (alloc_res < 0) return alloc_res;
             ctx->inodes[ino].indir1_blks++;
-            blks[start_Block_Index - FSX492_N_DIRECT] = blockAddr;
+            blks[(start_Block_Index - (FSX492_N_DIRECT)) % FSX492_PTRS_PER_BLK] = blockAddr;
         }
 
         if (bytesToWrite < FSX492_BLKSZ){
@@ -1693,19 +1706,20 @@ int fsx492_write(const char * path, const char * buf, size_t size,
         }  else {
             if (write_blks(blockAddr, 1, &buf[bytesWritten]) < 0) return -EIO;
             bytesWritten += FSX492_BLKSZ;
-            bytesToWrite -= numW;
+            bytesToWrite -= FSX492_BLKSZ;
         }
 
         start_Block_Index++;
     }
 
-    if (write_blks(ctx->inodes[ino].indir1_blks, 1, blks) < 0) return -EIO;
+    if (write_blks(blockAddr1, 1, blks) < 0) return -EIO;
+    if (write_blks(ctx->inodes[ino].indir2_blks, 1, blks2) < 0) return -EIO;
 
     // update inode and mark dirty
 
     if (bytesToWrite > 0) return -ENOSPC;
 
-    return -ENOSYS;
+    return bytesToWrite;
 }
 
 
