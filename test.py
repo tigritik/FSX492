@@ -96,13 +96,283 @@ def test_large_file(mountpoint):
     print("[test] passed large file")
 
 
+def test_subdirectory_file_ops(mountpoint):
+
+    # TEST: create / remove files in subdir
+    subdir = os.path.join(mountpoint, "subdir")
+
+    print(f"[test] mkdir {subdir}")
+    os.mkdir(subdir)
+
+    filepath = os.path.join(subdir, "nested.txt")
+
+    print(f"[test] create {filepath}")
+    with open(filepath, "w") as f:
+        f.write("nested data")
+
+    assert os.path.exists(filepath), "nested file missing"
+
+    print(f"[test] remove {filepath}")
+    os.remove(filepath)
+
+    assert not os.path.exists(filepath), "nested file still exists"
+
+    print(f"[test] rmdir {subdir}")
+    os.rmdir(subdir)
+
+    assert not os.path.exists(subdir), "subdir still exists"
+
+    print("[test] passed subdirectory file ops")
+
+
+def test_many_directories(mountpoint):
+
+    # TEST: create more than a blocks worth of directories
+    block_size = 1024
+    dirent_size = 32
+    direntries_per_block = block_size // dirent_size
+    count = 2 * direntries_per_block # 2 blocks worth
+
+    print(f"[test] creating {count} directories")
+
+    for i in range(count):
+        path = os.path.join(mountpoint, f"dir_{i}")
+        os.mkdir(path)
+
+    entries = os.listdir(mountpoint)
+
+    for i in range(count):
+        assert f"dir_{i}" in entries, f"missing dir_{i}"
+
+    print(f"[test] removing {count} directories")
+
+    for i in range(count):
+        path = os.path.join(mountpoint, f"dir_{i}")
+        os.rmdir(path)
+
+    entries = os.listdir(mountpoint)
+
+    for i in range(count):
+        assert f"dir_{i}" not in entries, f"dir_{i} still exists"
+
+    print("[test] passed many directories")
+
+
+def test_overwrite_file(mountpoint):
+
+    # TEST: overwite file contents (O_TRUNC)
+    path = os.path.join(mountpoint, "overwrite.txt")
+
+    print(f"[test] initial write {path}")
+
+    with open(path, "w") as f:
+        f.write("abcdef")
+
+    print(f"[test] overwrite {path}")
+
+    with open(path, "w") as f:
+        f.write("xyz")
+
+    with open(path, "r") as f:
+        data = f.read()
+
+    assert data == "xyz", f"overwrite failed: got '{data}'"
+
+    st = os.stat(path)
+    assert st.st_size == 3, "file size not truncated"
+
+    print("[test] passed overwrite file")
+
+
+def test_append_mode(mountpoint):
+
+    # TEST: append file contents (O_APPEND)
+    path = os.path.join(mountpoint, "append.txt")
+
+    with open(path, "w") as f:
+        f.write("hello")
+
+    with open(path, "a") as f:
+        f.write(" world")
+
+    with open(path, "r") as f:
+        data = f.read()
+
+    assert data == "hello world", f"append failed: got '{data}'"
+
+    print("[test] passed append mode")
+
+
+def test_middle_write(mountpoint):
+
+    # TEST: writing to a middle of file (lseek)
+    path = os.path.join(mountpoint, "middle.txt")
+
+    print(f"[test] create {path}")
+
+    with open(path, "w") as f:
+        f.write("hello world")
+
+    print(f"[test] overwrite middle of file")
+
+    with open(path, "r+") as f:
+        f.seek(6)
+        f.write("FUSE")
+
+    with open(path, "r") as f:
+        data = f.read()
+
+    assert data == "hello FUSEd", \
+        f"middle write failed: got '{data}'"
+
+    st = os.stat(path)
+
+    assert st.st_size == len("hello FUSEd"), \
+        "unexpected file size after middle write"
+
+    print("[test] passed middle write")
+
+
+def test_hard_links(mountpoint):
+
+    # TEST: hard linking, link counts, inode comparison
+    src = os.path.join(mountpoint, "original.txt")
+    dst = os.path.join(mountpoint, "linked.txt")
+
+    print(f"[test] create {src}")
+
+    with open(src, "w") as f:
+        f.write("hello")
+
+    print(f"[test] create hard link {dst}")
+
+    os.link(src, dst)
+
+    st_src = os.stat(src)
+    st_dst = os.stat(dst)
+
+    # TEST: same inode
+    assert st_src.st_ino == st_dst.st_ino, \
+        "hard links should share inode"
+
+    # TEST: link count increased
+    assert st_src.st_nlink == 2, \
+        f"expected 2 links, got {st_src.st_nlink}"
+
+    # TEST: shared contents
+    with open(dst, "r") as f:
+        data = f.read()
+
+    assert data == "hello", \
+        "linked file contents incorrect"
+
+    # TEST: content updates in both files
+    with open(dst, "w") as f:
+        f.write("hello world")
+        f.flush()
+        os.fsync(f.fileno())
+
+    with open(src, "r") as f:
+        datasrc = f.read()
+
+    with open(dst, "r") as f:
+        datadst = f.read()
+
+    print(datadst)
+    print(datasrc)
+    assert datasrc == datadst == "hello world", \
+        "linked file contents updated incorrectly"
+
+    print(f"[test] unlink {dst}")
+
+    os.remove(dst)
+
+    # TEST: remove link, decrement count. Poll bc of caching
+    success = False
+
+    for _ in range(10):
+        st_src = os.stat(src)
+
+        if st_src.st_nlink == 1:
+            success = True
+            break
+
+        time.sleep(0.1)
+
+    assert success, \
+        f"link count not decremented (got {st_src.st_nlink})"
+
+    print("[test] passed hard links")
+
+
+def test_timestamps(mountpoint):
+
+    # TEST: access time modification
+    path = os.path.join(mountpoint, "time.txt")
+
+    with open(path, "w") as f:
+        f.write("hello")
+
+    st1 = os.stat(path)
+
+    time.sleep(1)
+
+    with open(path, "a") as f:
+        f.write(" world")
+
+    st2 = os.stat(path)
+
+    assert st2.st_mtime > st1.st_mtime, "mtime not updated"
+
+    time.sleep(1)
+
+    with open(path, "r") as f:
+        f.read()
+
+    st3 = os.stat(path)
+
+    assert st3.st_atime >= st2.st_atime, "atime not updated"
+
+    print("[test] passed timestamps")
+
+
+def test_chmod(mountpoint):
+
+    # TEST: permission changes
+    path = os.path.join(mountpoint, "perm.txt")
+
+    with open(path, "w") as f:
+        f.write("data")
+
+    print(f"[test] chmod 600 {path}")
+
+    os.chmod(path, 0o600)
+
+    st = os.stat(path)
+
+    mode = st.st_mode & 0o777
+
+    assert mode == 0o600, f"chmod failed: got {oct(mode)}"
+
+    print(f"[test] chmod 644 {path}")
+
+    os.chmod(path, 0o644)
+
+    st = os.stat(path)
+
+    mode = st.st_mode & 0o777
+
+    assert mode == 0o644, f"chmod failed: got {oct(mode)}"
+
+    print("[test] passed chmod")
+
 
 ##############################################################################
 # END TEST DEFINITIONS
 ##############################################################################
 
 TESTS = {
-    k.lstrip('test_'): v for k, v in globals().items() if k.startswith('test_')
+    k[len("test_"):]: v for k, v in globals().items() if k.startswith('test_')
 }
 
 
