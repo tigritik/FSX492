@@ -1579,6 +1579,7 @@ int fsx492_write(const char * path, const char * buf, size_t size,
             const uint32_t alloc_res = alloc_blk(&blockAddr, ctx);
             if (alloc_res < 0) return alloc_res;
             ctx->inodes[ino].indir1_blocks++;
+            ctx->inodes[ino].indir1_blks = blockAddr;
         }
     if (read_blks(ctx->inodes[ino].indir1_blks, 1, (void *)blks) < 0) {
         return -EIO;
@@ -1615,6 +1616,9 @@ int fsx492_write(const char * path, const char * buf, size_t size,
 
         start_Block_Index++;
     }
+
+    if (write_blks(ctx->inodes[ino].indir1_blks, 1, blks) < 0) return -EIO;
+
 
     // write to indir2 blocks if needed (allocate space as needed)
 
