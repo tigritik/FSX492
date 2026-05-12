@@ -950,6 +950,8 @@ static int _unlink(
     struct fsx492_inode* inode = &ctx->inodes[ino];
     inode->nlink--;
 
+    if(inode->nlink) dirty_inode(inode, ctx);
+
     // delete inode if necessary
     if (!inode->nlink) {
         // dealloc disk space (double then single then direct)
