@@ -1638,6 +1638,7 @@ int fsx492_write(const char * path, const char * buf, size_t size,
     // write to indir2 blocks if needed (allocate space as needed)
 
     // create a buffer to store singly indirect pointers
+    uint32_t blks1[FSX492_PTRS_PER_BLK];
     uint32_t blks2[FSX492_PTRS_PER_BLK];
 
     blockAddr = ctx->inodes[ino].indir2_blks;
@@ -1662,7 +1663,7 @@ int fsx492_write(const char * path, const char * buf, size_t size,
         // if we are at the start of a new indirect block
         // writeback the previous indirect block (unless its 0)
         if(indirPtrAddr && !((startBlockIndex - FSX492_N_DIRECT) % FSX492_PTRS_PER_BLK)) {
-            if (write_blks(indirPtrAddr, 1, blks) < 0) return -EIO;
+            if (write_blks(indirPtrAddr, 1, blks1) < 0) return -EIO;
         }
 
         // complicated doubly indirect pointer math
@@ -1677,16 +1678,16 @@ int fsx492_write(const char * path, const char * buf, size_t size,
         }
 
         // read the block pointers stored in indirect into the buffer
-        if (read_blks(indirPtrAddr, 1, (void *)blks) < 0) {
+        if (!((startBlockIndex - FSX492_N_DIRECT) % FSX492_PTRS_PER_BLK) && read_blks(indirPtrAddr, 1, (void *)blks1) < 0) {
             return -EIO;
         }
 
         // notice that we omit subtracting out the number of indirect blocks bc of the mod
-        blockAddr = blks[(startBlockIndex - FSX492_N_DIRECT) % FSX492_PTRS_PER_BLK];
+        blockAddr = blks1[(startBlockIndex - FSX492_N_DIRECT) % FSX492_PTRS_PER_BLK];
         if (!blockAddr || validate_block(blockAddr, ctx) == -EINVAL) {
             const uint32_t alloc_res = alloc_blk(&blockAddr, ctx);
             if (alloc_res < 0) return (int) alloc_res;
-            blks[(startBlockIndex - (FSX492_N_DIRECT)) % FSX492_PTRS_PER_BLK] = blockAddr;
+            blks1[(startBlockIndex - (FSX492_N_DIRECT)) % FSX492_PTRS_PER_BLK] = blockAddr;
         }
 
         const size_t blockOffset = offset % FSX492_BLKSZ;
@@ -1709,7 +1710,7 @@ int fsx492_write(const char * path, const char * buf, size_t size,
     }
 
     // only write the indirect1 pointer if it was initialized
-    if (indirPtrAddr && write_blks(indirPtrAddr, 1, blks) < 0) return -EIO;
+    if (indirPtrAddr && write_blks(indirPtrAddr, 1, blks1) < 0) return -EIO;
     // write back the indirect2 data that was modified
     if (write_blks(ctx->inodes[ino].indir2_blks, 1, blks2) < 0) return -EIO;
 
