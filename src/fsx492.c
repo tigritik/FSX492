@@ -1863,6 +1863,7 @@ int fsx492_releasedir(const char * path, struct fuse_file_info * fi)
  *             -EMLINK  if oldpath has too many links
  *             -ENOENT  if the oldpath file does not exist
  *             -ENOTDIR if any component of old or new path is not a directory
+ *             -EPERM   if the oldpath ends with a directory
  *             -ENOSPC  if directory full
  *             -EINVAL  if name too long
  */
@@ -1879,7 +1880,7 @@ int fsx492_link(const char * oldpath, const char * newpath)
     uint32_t target_ino = 0;
     int out = lookup_path(oldpath, &ino, NULL);
     if(out < 0) return out;
-    if(S_ISDIR(ctx->inodex[ino].mode)) return EINVAL;
+    if(S_ISDIR(ctx->inodex[ino].mode)) return -EPERM;
     out = lookup_path(newpath, NULL, &target_ino);
     switch (out) {
         case 0:         // the path was found
