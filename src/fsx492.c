@@ -205,7 +205,7 @@ static inline int alloc_blk(uint32_t * blkno, struct context * ctx)
  * @param[in]  blkno  The block number
  * @param      ctx    The file system context
  */
-static inline void free_blk(uint32_t blkno, struct context * ctx)
+static inline void free_blk(uint32_t blkno, struct context * ctx) //this is garbage
 {
     assert(ctx);
     assert(blkno >= ctx->data_base); // cannot free metadata blocks
@@ -332,7 +332,7 @@ static inline size_t _free_last_blks(
     size_t nfreed = 0;
     for (size_t i = 0; nfreed < n && i < len; i++) {
         size_t idx = (len - 1) - i;
-        if (validate_block(blks[idx], ctx) == 0) {
+        if (!blks[idx] ||validate_block(blks[idx], ctx) == 0) {
             free_blk(blks[idx], ctx);
             blks[idx] = 0;
             nfreed++;
@@ -384,7 +384,7 @@ static inline size_t _free_last_indir1_blks(
     assert(ctx);
     assert(inode);
     assert(inode->blocks > FSX492_N_DIRECT);
-    if (validate_block(inode->indir1_blks, ctx) < 0) {
+    if (!inode->indir1_blks || validate_block(inode->indir1_blks, ctx) < 0) {
         return 0;
     }
 
@@ -432,7 +432,7 @@ static inline size_t _free_last_indir2_blks(
     assert(ctx);
     assert(inode);
     assert(inode->blocks > FSX492_N_DIRECT + FSX492_PTRS_PER_BLK);
-    if (validate_block(inode->indir2_blks, ctx) < 0) {
+    if (!inode->indir2_blks || validate_block(inode->indir2_blks, ctx) < 0) { //breaks otherwise because super block is zero so validate suceeds
         return 0;
     }
 
@@ -448,7 +448,7 @@ static inline size_t _free_last_indir2_blks(
     for (size_t i = 0; i < FSX492_PTRS_PER_BLK; i++) {
         // free blocks in reverse order
         size_t idx = (FSX492_PTRS_PER_BLK - 1) - i;
-        if (validate_block(blks2[idx], ctx) < 0) {
+        if (!blks2[idx] || validate_block(blks2[idx], ctx) < 0) {
             continue;
         }
 
@@ -545,7 +545,7 @@ static int find_entry(
     struct fsx492_dirent direct[FSX492_DIRENTRIES_PER_BLK];
     for(int i = 0; i < FSX492_N_DIRECT; i++){
         uint32_t blk_adr = ctx->inodes[dir_ino].direct_blks[i];
-        if(validate_block(blk_adr, ctx) == -EINVAL) continue;
+        if(!blk_adr || validate_block(blk_adr, ctx) == -EINVAL) continue;
         if(read_blks(blk_adr, 1, direct)) return -EIO;
         ssize_t index = search_block(name, direct);
         if(index >= 0) { 
@@ -835,7 +835,7 @@ static int _link(
     struct fsx492_dirent entries[FSX492_N_DIRECT*FSX492_DIRENTRIES_PER_BLK] = {0};
     for (int i = 0; i < FSX492_N_DIRECT; i++) {
         const uint32_t blockAddr = ctx->inodes[dir_ino].direct_blks[i];
-        if (validate_block(blockAddr, ctx) == -EINVAL) continue;
+        if (!blockAddr || validate_block(blockAddr, ctx) == -EINVAL) continue;
         if (read_blks(blockAddr, 1, &entries[i*FSX492_DIRENTRIES_PER_BLK]) < 0)
             return -EIO;
     }
@@ -862,7 +862,7 @@ static int _link(
     // we need to check if a new block needs to be allocated
     const int newBlock = validate_block(modifiedBlockAddr, ctx);
 
-    if (newBlock) {
+    if (newBlock || !modifiedBlockAddr) {
         if (alloc_blk(&modifiedBlockAddr, ctx) < 0) return -EIO;
     }
     if (write_blks(modifiedBlockAddr, 1, &entries[modifiedBlockIdx*FSX492_DIRENTRIES_PER_BLK]) < 0)
@@ -908,13 +908,17 @@ static int _unlink(
     struct fsx492_dirent entries[FSX492_DIRENTRIES_PER_BLK] = {0};
     ssize_t direntIdx = -ENOENT; // index of the entry we're looking for
     uint32_t blockAddr = ctx->inodes[dir_ino].direct_blks[0];
+    int blkIdx = -1;
     for (int i = 0; i < FSX492_N_DIRECT; i++) {
         blockAddr = ctx->inodes[dir_ino].direct_blks[i];
         if (!blockAddr || validate_block(blockAddr, ctx) == -EINVAL) continue;
         if (read_blks(blockAddr, 1, entries) < 0) return -EIO;
         direntIdx = search_block(name, entries);
         if (direntIdx == -EIO) return -EIO;
-        if (direntIdx >= 0) break;
+        if (direntIdx >= 0){
+            blkIdx = i;
+            break;
+        };
     }
 
     // if the entry was not found after the entire loop ran
@@ -937,20 +941,25 @@ static int _unlink(
         }
     }
 
-    if (deAlloc) free_blk(blockAddr, ctx);
+    if (deAlloc) {
+        free_blk(blockAddr, ctx);
+        ctx->inodes[dir_ino].direct_blks[blkIdx] = 0;
+        ctx->inodes[dir_ino].blocks--;
+    }
 
 
     // change directory file size after writeback succeeds
     ctx->inodes[dir_ino].size -= sizeof(struct fsx492_dirent);
-    ctx->inodes[dir_ino].direct_blks[direntIdx] = {0};
-    if (deAlloc) ctx->inodes[dir_ino].blocks--;
     ctx->inodes[dir_ino].atime = ctx->inodes[dir_ino].mtime = time(NULL);
+    dirty_inode(dir_ino, ctx);
 
     // decrement inode nlink
     struct fsx492_inode* inode = &ctx->inodes[ino];
     inode->nlink--;
 
-    if(inode->nlink) dirty_inode(inode, ctx);
+    if (inode->nlink) {
+        dirty_inode(ino, ctx);
+    }
 
     // delete inode if necessary
     if (!inode->nlink) {
