@@ -1571,7 +1571,7 @@ int fsx492_write(const char * path, const char * buf, size_t size,
             if (write_blks(blockAddr, 1, &buf[bytesWritten]) < 0) return -EIO;
             bytesWritten += FSX492_BLKSZ;
             bytesToWrite -= FSX492_BLKSZ;
-            offset +=  numW;
+            offset +=  FSX492_BLKSZ;
         }
 
         startBlockIndex++;
@@ -1627,7 +1627,7 @@ int fsx492_write(const char * path, const char * buf, size_t size,
             if (write_blks(blockAddr, 1, &buf[bytesWritten]) < 0) return -EIO;
             bytesWritten += FSX492_BLKSZ;
             bytesToWrite -= FSX492_BLKSZ;
-            offset +=  numW;
+            offset +=  FSX492_BLKSZ;
         }
 
 
@@ -1704,7 +1704,7 @@ int fsx492_write(const char * path, const char * buf, size_t size,
             if (write_blks(blockAddr, 1, &buf[bytesWritten]) < 0) return -EIO;
             bytesWritten += FSX492_BLKSZ;
             bytesToWrite -= FSX492_BLKSZ;
-            offset +=  numW;
+            offset +=  FSX492_BLKSZ;
         }
 
         start_Block_Index++;
@@ -1717,7 +1717,7 @@ int fsx492_write(const char * path, const char * buf, size_t size,
 
     dirty_inode(ino, ctx);
 
-    ctx->inodes[ino].size += bytesWritten - (size - offset);
+    ctx->inodes[ino].size = offset;
 
     inode->mtime = inode->atime = time(NULL);
 
