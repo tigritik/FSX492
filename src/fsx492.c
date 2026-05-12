@@ -1010,6 +1010,7 @@ struct fuse_operations fsx492_ops = {
 void * fsx492_init(struct fuse_conn_info * conn, struct fuse_config * cfg)
 {
     fprintf(stdout, "fsx492_init\n");
+    cfg->use_ino = 1;   
     assert(disk);
     assert(disk->ops);
     struct fsx492_superblk sb;
@@ -1863,6 +1864,7 @@ int fsx492_releasedir(const char * path, struct fuse_file_info * fi)
  *             -EMLINK  if oldpath has too many links
  *             -ENOENT  if the oldpath file does not exist
  *             -ENOTDIR if any component of old or new path is not a directory
+ *             -EPERM   if the oldpath is a directory
  *             -ENOSPC  if directory full
  *             -EINVAL  if name too long
  */
@@ -1872,11 +1874,41 @@ int fsx492_link(const char * oldpath, const char * newpath)
     assert(oldpath);
     assert(newpath);
 
+    struct context * ctx = (struct context *)fuse_get_context()->private_data;
+    assert(ctx);
+
     // lookup paths
+    uint32_t ino = 0;
+    uint32_t target_ino = 0;
+    uint32_t temp_ino = 0;
+    int out = lookup_path(oldpath, &ino, NULL);
+    if(out < 0) return out;
+    if(S_ISDIR(ctx->inodes[ino].mode)) return -EPERM;
+    out = lookup_path(newpath, &temp_ino, &target_ino);
+    switch (out) {
+        case 0:         // the path was found
+            return -EEXIST;
+        case -EIO:      // disk error
+        case -ENOTDIR:  // bad path
+        case -EINVAL:   // bad path
+            return out;
+        case -ENOENT:
+            if (!temp_ino) {
+                // bad path
+                return out;
+            }
+            break;
+        default:
+            assert(0); // unreachable
+    }
+    assert(ino);
+    assert(target_ino);
+
+    if (ctx->inodes[ino].nlink == UINT16_MAX) return -EMLINK;
 
     // link old inode to new directory inode
 
-    return -ENOSYS;
+    return _link(basename(newpath), ino, target_ino, ctx);
 }
 
 
