@@ -332,7 +332,7 @@ static inline size_t _free_last_blks(
     size_t nfreed = 0;
     for (size_t i = 0; nfreed < n && i < len; i++) {
         size_t idx = (len - 1) - i;
-        if (!blks[idx] ||validate_block(blks[idx], ctx) == 0) {
+        if (blks[idx] && validate_block(blks[idx], ctx) == 0) {
             free_blk(blks[idx], ctx);
             blks[idx] = 0;
             nfreed++;
