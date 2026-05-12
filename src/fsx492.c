@@ -1329,6 +1329,11 @@ int fsx492_open(const char * path, struct fuse_file_info * fi)
     
     fi->fh = (uint64_t) fh;
 
+    // Disable kernel page cache for this file handle to keep hard-link
+    // reads coherent while testing alias updates.
+    fi->direct_io = 1;
+    fi->keep_cache = 0;
+
     // truncate if necessary
     if ((fi->flags & O_TRUNC)) {
         const int ret = _truncate(ino, 0, ctx);
