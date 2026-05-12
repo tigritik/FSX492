@@ -1488,7 +1488,9 @@ int fsx492_read(const char * path, char * buf, size_t size,
  * @return     exact number of bytes requested
  *             -EIO    on disk error
  *             -EBADF  on bad file handle
+ *             -EISDIR if the file is a directory
  *             -EINVAL if offset is larger than file size
+ *             -ENOSPC if file size exceeds maximum or no disk space
  *             
  * @note       write should allocate more data blocks if needed
  *             see write(2) manpage
@@ -1518,8 +1520,35 @@ int fsx492_write(const char * path, const char * buf, size_t size,
     // TODO:
 
     // validate file handle
+    if (!fi->fh) return -EBADF;
+    const uint32_t ino = ((struct fh*) fi->fh)->ino;
+
+    if (validate_inode(ino, ctx) == -EINVAL) return -EINVAL;
+
+    if (S_ISDIR(ctx->inodes[ino].mode)) return -EISDIR;
+
+    if (offset > ctx->inodes[ino].size) return -EINVAL;
+
+    size_t bytesToWrite = size;
+    size_t bytesWritten = offset % FSX492_BLKSZ;
+    size_t startBlockIndex = offset / FSX492_BLKSZ;
+    char blockBuffer[FSX492_BLKSZ];
 
     // write to direct blocks if needed (allocate space as needed)
+    while (bytesToWrite > 0 && startBlockIndex < FSX492_N_DIRECT) {
+        uint32_t blockAddr = ctx->inodes[ino].direct_blks[startBlockIndex];
+        if (blockAddr && validate_block(blockAddr, ctx) == -EINVAL) {
+            const uint32_t alloc_res = alloc_blk(&blockAddr, ctx);
+            if (alloc_res < 0) return alloc_res;
+        }
+        if (bytesWritten % FSX492_BLKSZ != 0) {
+            if (read_blks(blockAddr, 1, blockBuffer) < 0) return -EIO;
+        }
+        memcpy(blockBuffer, buf+bytesWritten, FSX492_BLKSZ);
+        if (write_blks(blockAddr, 1, blockBuffer) < 0) return -EIO;
+        startBlockIndex++;
+        bytesWritten += FSX492_BLKSZ - (bytesWritten % FSX492_BLKSZ);
+    }
 
     // write to indir1 blocks if needed (allocate space as needed)
 
@@ -1527,6 +1556,7 @@ int fsx492_write(const char * path, const char * buf, size_t size,
 
     // update inode and mark dirty
 
+    if (bytesToWrite > 0) return -ENOSPC;
 
     return -ENOSYS;
 }
