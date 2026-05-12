@@ -1540,7 +1540,7 @@ int fsx492_write(const char * path, const char * buf, size_t size,
     // write to direct blocks if needed (allocate space as needed)
     while (bytesToWrite  && startBlockIndex < FSX492_N_DIRECT) {
         blockAddr = ctx->inodes[ino].direct_blks[startBlockIndex];
-        if (blockAddr && validate_block(blockAddr, ctx) == -EINVAL) {
+        if (!blockAddr || validate_block(blockAddr, ctx) == -EINVAL) {
             const uint32_t alloc_res = alloc_blk(&blockAddr, ctx);
             if (alloc_res < 0) return (int) alloc_res;
             ctx->inodes[ino].blocks++;
@@ -1575,7 +1575,7 @@ int fsx492_write(const char * path, const char * buf, size_t size,
 
     // if we still have bytes to write but the indirect pointer is invalid
     // then initialize it
-    if (bytesToWrite && blockAddr && validate_block(blockAddr, ctx) == -EINVAL) {
+    if (bytesToWrite && (!blockAddr || validate_block(blockAddr, ctx) == -EINVAL)) {
         const uint32_t alloc_res = alloc_blk(&blockAddr, ctx);
         if (alloc_res < 0) return (int) alloc_res;
         ctx->inodes[ino].indir1_blks = blockAddr;
@@ -1590,7 +1590,7 @@ int fsx492_write(const char * path, const char * buf, size_t size,
     while (bytesToWrite && startBlockIndex < FSX492_PTRS_PER_BLK + FSX492_N_DIRECT){
 
         blockAddr = blks[startBlockIndex - FSX492_N_DIRECT];
-        if (blockAddr && validate_block(blockAddr, ctx) == -EINVAL) {
+        if (!blockAddr || validate_block(blockAddr, ctx) == -EINVAL) {
             const uint32_t alloc_res = alloc_blk(&blockAddr, ctx);
             if (alloc_res < 0) return (int) alloc_res;
             ctx->inodes[ino].blocks++;
@@ -1630,7 +1630,7 @@ int fsx492_write(const char * path, const char * buf, size_t size,
 
     /// if we still have bytes to write but the 2indirect pointer is invalid
     // then initialize it
-    if (bytesToWrite && blockAddr && validate_block(blockAddr, ctx) == -EINVAL) {
+    if (bytesToWrite && (!blockAddr || validate_block(blockAddr, ctx) == -EINVAL)) {
         const uint32_t alloc_res = alloc_blk(&blockAddr, ctx);
         if (alloc_res < 0) return (int) alloc_res;
         ctx->inodes[ino].indir2_blks = blockAddr;
@@ -1655,7 +1655,7 @@ int fsx492_write(const char * path, const char * buf, size_t size,
         indirPtrAddr = blks2[(startBlockIndex - FSX492_PTRS_PER_BLK - FSX492_N_DIRECT) / FSX492_PTRS_PER_BLK];
 
         //if the indirect pointer is invalid then initialize it
-        if (indirPtrAddr && validate_block(indirPtrAddr, ctx) == -EINVAL) {
+        if (!indirPtrAddr || validate_block(indirPtrAddr, ctx) == -EINVAL) {
             const uint32_t alloc_res = alloc_blk(&indirPtrAddr, ctx);
             if (alloc_res < 0) return (int) alloc_res;
             blks2[(startBlockIndex - FSX492_PTRS_PER_BLK - FSX492_N_DIRECT) / FSX492_PTRS_PER_BLK] = indirPtrAddr;
@@ -1668,7 +1668,7 @@ int fsx492_write(const char * path, const char * buf, size_t size,
 
         // notice that we omit subtracting out the number of indirect blocks bc of the mod
         blockAddr = blks[(startBlockIndex - FSX492_N_DIRECT) % FSX492_PTRS_PER_BLK];
-        if (blockAddr && validate_block(blockAddr, ctx) == -EINVAL) {
+        if (!blockAddr || validate_block(blockAddr, ctx) == -EINVAL) {
             const uint32_t alloc_res = alloc_blk(&blockAddr, ctx);
             if (alloc_res < 0) return (int) alloc_res;
             blks[(startBlockIndex - (FSX492_N_DIRECT)) % FSX492_PTRS_PER_BLK] = blockAddr;
