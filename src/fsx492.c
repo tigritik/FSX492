@@ -1873,10 +1873,32 @@ int fsx492_link(const char * oldpath, const char * newpath)
     assert(newpath);
 
     // lookup paths
+    uint32_t ino = 0
+    uint32_t target_ino = 0
+    int out = lookup_path(oldpath, &ino, NULL);
+    if(out < 0): return out;
+    out = lookup_path(newpath, NULL, &target_ino);
+    switch (out) {
+        case 0:         // the path was found
+            return -EEXIST;
+        case -EIO:      // disk error
+        case -ENOTDIR:  // bad path
+        case -EINVAL:   // bad path
+            return out;
+        case -ENOENT:
+            if (!ino) {
+                // bad path
+                return out;
+            }
+            break;
+        default:
+            assert(0); // unreachable
+    }
 
     // link old inode to new directory inode
 
-    return -ENOSYS;
+        _link(basename(newpath), ino, target_ino, (struct context *)fuse_get_context()->private_data);
+
 }
 
 
