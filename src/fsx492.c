@@ -1903,7 +1903,7 @@ int fsx492_link(const char * oldpath, const char * newpath)
     assert(ino);
     assert(target_ino);
 
-    if (ctx->inodes[ino].nlinks == UINT16_MAX) return -EMLINK;
+    if (ctx->inodes[ino].nlink == UINT16_MAX) return -EMLINK;
 
     // link old inode to new directory inode
 
