@@ -860,9 +860,9 @@ static int _link(
     uint32_t modifiedBlockAddr = ctx->inodes[dir_ino].direct_blks[modifiedBlockIdx];
 
     // we need to check if a new block needs to be allocated
-    const int newBlock = validate_block(modifiedBlockAddr, ctx);
+    const int newBlock = !modifiedBlockAddr || validate_block(modifiedBlockAddr, ctx);
 
-    if (newBlock || !modifiedBlockAddr) {
+    if (newBlock) {
         if (alloc_blk(&modifiedBlockAddr, ctx) < 0) return -EIO;
     }
     if (write_blks(modifiedBlockAddr, 1, &entries[modifiedBlockIdx*FSX492_DIRENTRIES_PER_BLK]) < 0)
@@ -1052,6 +1052,7 @@ void * fsx492_init(struct fuse_conn_info * conn, struct fuse_config * cfg)
     _ctx->block_map_base = _ctx->inode_map_base + sb.inode_map_sz;
     _ctx->inodes_base = _ctx->block_map_base + sb.block_map_sz;
     _ctx->n_inodes = sb.inode_region_sz * FSX492_INODES_PER_BLK;
+    printf("number of inodes: %d\n", _ctx->n_inodes);
 
     _ctx->n_metablks = 
         1 + sb.inode_map_sz + sb.block_map_sz + sb.inode_region_sz;
@@ -1327,6 +1328,15 @@ int fsx492_open(const char * path, struct fuse_file_info * fi)
     // store file handle in fi->fh
     
     fi->fh = (uint64_t) fh;
+
+    // truncate if necessary
+    if ((fi->flags & O_TRUNC)) {
+        const int ret = _truncate(ino, 0, ctx);
+        if (ret < 0) {
+            free(fh);
+            return ret;
+        }
+    }
 
     return 0;
 }
