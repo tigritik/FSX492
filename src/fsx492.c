@@ -12,6 +12,7 @@
 #define FUSE_USE_VERSION 31
 
 #define min(a,b) (((a) < (b)) ? (a) : (b))
+#define max(a,b) (((a) > (b)) ? (a) : (b))
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1518,8 +1519,6 @@ int fsx492_write(const char * path, const char * buf, size_t size,
     assert(fi);
 
     struct context * ctx = (struct context *)fuse_get_context()->private_data;
-    
-    // TODO:
 
     // validate file handle
     if (!fi->fh) return -EBADF;
@@ -1536,194 +1535,179 @@ int fsx492_write(const char * path, const char * buf, size_t size,
     size_t startBlockIndex = offset / FSX492_BLKSZ;
     char blockBuffer[FSX492_BLKSZ];
     uint32_t blockAddr = 0;
-    size_t numW = FSX492_BLKSZ - offset;
+    size_t chunk = 0;
 
     // write to direct blocks if needed (allocate space as needed)
     while (bytesToWrite  && startBlockIndex < FSX492_N_DIRECT) {
         blockAddr = ctx->inodes[ino].direct_blks[startBlockIndex];
         if (blockAddr && validate_block(blockAddr, ctx) == -EINVAL) {
             const uint32_t alloc_res = alloc_blk(&blockAddr, ctx);
-            if (alloc_res < 0) return alloc_res;
+            if (alloc_res < 0) return (int) alloc_res;
             ctx->inodes[ino].blocks++;
             ctx->inodes[ino].direct_blks[startBlockIndex] = blockAddr;
         }
 
-        if (bytesToWrite < FSX492_BLKSZ){
+        const size_t blockOffset = offset % FSX492_BLKSZ;
+        chunk = min(FSX492_BLKSZ - blockOffset, bytesToWrite);
 
-            numW = min(FSX492_BLKSZ - (offset % FSX492_BLKSZ), bytesToWrite);
+        // case where we don't need to write a full block
+        if (bytesToWrite < FSX492_BLKSZ || blockOffset != 0){
             if (read_blks(blockAddr, 1, blockBuffer) < 0) return -EIO;
-            memcpy(&blockBuffer[offset % FSX492_BLKSZ], &buf[bytesWritten], numW);
+            memcpy(&blockBuffer[blockOffset], &buf[bytesWritten], chunk);
             if (write_blks(blockAddr, 1, blockBuffer) < 0) return -EIO;
-            bytesWritten += numW;
-            bytesToWrite -= numW;
-            offset +=  numW;
-
-        } else if (offset % FSX492_BLKSZ) {
-            numW = FSX492_BLKSZ - (offset % FSX492_BLKSZ);
-            if (read_blks(blockAddr, 1, blockBuffer) < 0) return -EIO;
-            memcpy(&blockBuffer[offset % FSX492_BLKSZ], &buf[bytesWritten], numW);
-            if (write_blks(blockAddr, 1, blockBuffer) < 0) return -EIO;
-            bytesWritten += numW;
-            bytesToWrite -= numW;
-            offset +=  numW;
-
-        }  else {
-            if (write_blks(blockAddr, 1, &buf[bytesWritten]) < 0) return -EIO;
-            bytesWritten += FSX492_BLKSZ;
-            bytesToWrite -= FSX492_BLKSZ;
-            offset +=  FSX492_BLKSZ;
+        }
+        else { // case for writing full block (avoid memcpy)
+            if (write_blks(blockAddr, 1, (void*) &buf[bytesWritten]) < 0) return -EIO;
         }
 
         startBlockIndex++;
-        
+        bytesWritten += chunk;
+        bytesToWrite -= chunk;
+        offset += (off_t) chunk;
     }
 
     // write to indir1 blocks if needed (allocate space as needed)
     
+    // store the block pointers within the indirect block
     uint32_t blks[FSX492_PTRS_PER_BLK];
 
     blockAddr = ctx->inodes[ino].indir1_blks;
 
-    if (blockAddr && validate_block(blockAddr, ctx) == -EINVAL && bytesToWrite) {
-            const uint32_t alloc_res = alloc_blk(&blockAddr, ctx);
-            if (alloc_res < 0) return alloc_res;
-            ctx->inodes[ino].blocks++;
-            ctx->inodes[ino].indir1_blks = blockAddr;
-        }
+    // if we still have bytes to write but the indirect pointer is invalid
+    // then initialize it
+    if (bytesToWrite && blockAddr && validate_block(blockAddr, ctx) == -EINVAL) {
+        const uint32_t alloc_res = alloc_blk(&blockAddr, ctx);
+        if (alloc_res < 0) return (int) alloc_res;
+        ctx->inodes[ino].indir1_blks = blockAddr;
+    }
+
+    // read the block pointers stored in indirect into the buffer
     if (read_blks(ctx->inodes[ino].indir1_blks, 1, (void *)blks) < 0) {
         return -EIO;
     }
 
-    while (bytesToWrite && start_Block_Index < FSX492_PTRS_PER_BLK + FSX492_N_DIRECT){
+    // write to the indirect blocks while there is still space and bytes to write
+    while (bytesToWrite && startBlockIndex < FSX492_PTRS_PER_BLK + FSX492_N_DIRECT){
 
-        blockAddr = blks[start_Block_Index - FSX492_N_DIRECT];
+        blockAddr = blks[startBlockIndex - FSX492_N_DIRECT];
         if (blockAddr && validate_block(blockAddr, ctx) == -EINVAL) {
             const uint32_t alloc_res = alloc_blk(&blockAddr, ctx);
-            if (alloc_res < 0) return alloc_res;
+            if (alloc_res < 0) return (int) alloc_res;
             ctx->inodes[ino].blocks++;
-            blks[start_Block_Index - FSX492_N_DIRECT] = blockAddr;
+            blks[startBlockIndex - FSX492_N_DIRECT] = blockAddr;
         }
 
-        if (bytesToWrite < FSX492_BLKSZ){
+        const size_t blockOffset = offset % FSX492_BLKSZ;
+        chunk = min(FSX492_BLKSZ - blockOffset, bytesToWrite);
 
-            numW = min(FSX492_BLKSZ - (offset % FSX492_BLKSZ), bytesToWrite);
+        // case where we don't need to write a full block
+        if (bytesToWrite < FSX492_BLKSZ || blockOffset != 0){
             if (read_blks(blockAddr, 1, blockBuffer) < 0) return -EIO;
-            memcpy(&blockBuffer[offset % FSX492_BLKSZ], &buf[bytesWritten], numW);
+            memcpy(&blockBuffer[blockOffset], &buf[bytesWritten], chunk);
             if (write_blks(blockAddr, 1, blockBuffer) < 0) return -EIO;
-            bytesWritten += numW;
-            bytesToWrite -= numW;
-            offset +=  numW;
-
-        } else if (offset % FSX492_BLKSZ) {
-            numW = FSX492_BLKSZ - (offset % FSX492_BLKSZ);
-            if (read_blks(blockAddr, 1, blockBuffer) < 0) return -EIO;
-            memcpy(&blockBuffer[offset % FSX492_BLKSZ], &buf[bytesWritten], numW);
-            if (write_blks(blockAddr, 1, blockBuffer) < 0) return -EIO;
-            bytesWritten += numW;
-            bytesToWrite -= numW;
-            offset +=  numW;
-
-        }  else {
-            if (write_blks(blockAddr, 1, &buf[bytesWritten]) < 0) return -EIO;
-            bytesWritten += FSX492_BLKSZ;
-            bytesToWrite -= FSX492_BLKSZ;
-            offset +=  FSX492_BLKSZ;
+        }
+        else { // case for writing full block (avoid memcpy)
+            if (write_blks(blockAddr, 1, (void*) &buf[bytesWritten]) < 0) return -EIO;
         }
 
-
-        start_Block_Index++;
+        startBlockIndex++;
+        bytesWritten += chunk;
+        bytesToWrite -= chunk;
+        offset += (off_t) chunk;
     }
 
+    // write back any changes within the indrect pointer buffer
     if (write_blks(ctx->inodes[ino].indir1_blks, 1, blks) < 0) return -EIO;
 
 
     // write to indir2 blocks if needed (allocate space as needed)
 
+    // create a buffer to store singly indirect pointers
     uint32_t blks2[FSX492_PTRS_PER_BLK];
 
     blockAddr = ctx->inodes[ino].indir2_blks;
-    uint32_t blockAddr1 =  0;
+    uint32_t indirPtrAddr = 0; // address of the indirect pointer
 
-    if (blockAddr && validate_block(blockAddr, ctx) == -EINVAL && bytesToWrite) {
-            const uint32_t alloc_res = alloc_blk(&blockAddr, ctx);
-            if (alloc_res < 0) return alloc_res;
-            ctx->inodes[ino].blocks++;
-            ctx->inodes[ino].indir2_blks = blockAddr;
-        }
+    /// if we still have bytes to write but the 2indirect pointer is invalid
+    // then initialize it
+    if (bytesToWrite && blockAddr && validate_block(blockAddr, ctx) == -EINVAL) {
+        const uint32_t alloc_res = alloc_blk(&blockAddr, ctx);
+        if (alloc_res < 0) return (int) alloc_res;
+        ctx->inodes[ino].indir2_blks = blockAddr;
+    }
+
+    // read the block pointers stored in indirect into the buffer
     if (read_blks(ctx->inodes[ino].indir2_blks, 1, (void *)blks2) < 0) {
         return -EIO;
     }
 
-    while (bytesToWrite && start_Block_Index < FSX492_PTRS_PER_BLK*FSX492_PTRS_PER_BLK + FSX492_PTRS_PER_BLK + FSX492_N_DIRECT){
+    // write to the indirect blocks while there is still space and bytes to write
+    while (bytesToWrite && startBlockIndex < FSX492_PTRS_PER_BLK*FSX492_PTRS_PER_BLK + FSX492_PTRS_PER_BLK + FSX492_N_DIRECT){
 
-        if(!((start_Block_Index - (FSX492_N_DIRECT)) % FSX492_PTRS_PER_BLK)){
-            if (write_blks(blockAddr1, 1, blks) < 0) return -EIO;
+        // if we are at the start of a new indirect block
+        // writeback the previous indirect block (unless its 0)
+        if(indirPtrAddr && !((startBlockIndex - FSX492_N_DIRECT) % FSX492_PTRS_PER_BLK)) {
+            if (write_blks(indirPtrAddr, 1, blks) < 0) return -EIO;
         }
 
-        blockAddr1 = blks2[(start_Block_Index - FSX492_PTRS_PER_BLK - FSX492_N_DIRECT) / FSX492_PTRS_PER_BLK]
+        // complicated doubly indirect pointer math
+        // (subtract out the already written blocks for direct and 1indir)
+        indirPtrAddr = blks2[(startBlockIndex - FSX492_PTRS_PER_BLK - FSX492_N_DIRECT) / FSX492_PTRS_PER_BLK];
 
-        if (blockAddr1 && validate_block(blockAddr1, ctx) == -EINVAL) {
-            const uint32_t alloc_res = alloc_blk(&blockAddr1, ctx);
-            if (alloc_res < 0) return alloc_res;
-            ctx->inodes[ino].blocks++;
-            blks2[(start_Block_Index - FSX492_PTRS_PER_BLK - FSX492_N_DIRECT) / FSX492_PTRS_PER_BLK] = blockAddr1;
+        //if the indirect pointer is invalid then initialize it
+        if (indirPtrAddr && validate_block(indirPtrAddr, ctx) == -EINVAL) {
+            const uint32_t alloc_res = alloc_blk(&indirPtrAddr, ctx);
+            if (alloc_res < 0) return (int) alloc_res;
+            blks2[(startBlockIndex - FSX492_PTRS_PER_BLK - FSX492_N_DIRECT) / FSX492_PTRS_PER_BLK] = indirPtrAddr;
         }
 
-        if (read_blks(ctx->inodes[ino].indir1_blks, 1, (void *)blks) < 0) {
-        return -EIO;
+        // read the block pointers stored in indirect into the buffer
+        if (read_blks(indirPtrAddr, 1, (void *)blks) < 0) {
+            return -EIO;
         }
 
-        blockAddr = blks[(start_Block_Index - (FSX492_N_DIRECT)) % FSX492_PTRS_PER_BLK];
+        // notice that we omit subtracting out the number of indirect blocks bc of the mod
+        blockAddr = blks[(startBlockIndex - FSX492_N_DIRECT) % FSX492_PTRS_PER_BLK];
         if (blockAddr && validate_block(blockAddr, ctx) == -EINVAL) {
             const uint32_t alloc_res = alloc_blk(&blockAddr, ctx);
-            if (alloc_res < 0) return alloc_res;
-            ctx->inodes[ino].indir1_blks++;
-            blks[(start_Block_Index - (FSX492_N_DIRECT)) % FSX492_PTRS_PER_BLK] = blockAddr;
+            if (alloc_res < 0) return (int) alloc_res;
+            blks[(startBlockIndex - (FSX492_N_DIRECT)) % FSX492_PTRS_PER_BLK] = blockAddr;
         }
 
-        if (bytesToWrite < FSX492_BLKSZ){
+        const size_t blockOffset = offset % FSX492_BLKSZ;
+        chunk = min(FSX492_BLKSZ - blockOffset, bytesToWrite);
 
-            numW = min(FSX492_BLKSZ - (offset % FSX492_BLKSZ), bytesToWrite);
+        // case where we don't need to write a full block
+        if (bytesToWrite < FSX492_BLKSZ || blockOffset != 0){
             if (read_blks(blockAddr, 1, blockBuffer) < 0) return -EIO;
-            memcpy(&blockBuffer[offset % FSX492_BLKSZ], &buf[bytesWritten], numW);
+            memcpy(&blockBuffer[blockOffset], &buf[bytesWritten], chunk);
             if (write_blks(blockAddr, 1, blockBuffer) < 0) return -EIO;
-            bytesWritten += numW;
-            bytesToWrite -= numW;
-            offset +=  numW;
-
-        } else if (offset % FSX492_BLKSZ) {
-            numW = FSX492_BLKSZ - (offset % FSX492_BLKSZ);
-            if (read_blks(blockAddr, 1, blockBuffer) < 0) return -EIO;
-            memcpy(&blockBuffer[offset % FSX492_BLKSZ], &buf[bytesWritten], numW);
-            if (write_blks(blockAddr, 1, blockBuffer) < 0) return -EIO;
-            bytesWritten += numW;
-            bytesToWrite -= numW;
-            offset +=  numW;
-
-        }  else {
-            if (write_blks(blockAddr, 1, &buf[bytesWritten]) < 0) return -EIO;
-            bytesWritten += FSX492_BLKSZ;
-            bytesToWrite -= FSX492_BLKSZ;
-            offset +=  FSX492_BLKSZ;
+        }
+        else { // case for writing full block (avoid memcpy)
+            if (write_blks(blockAddr, 1, (void*) &buf[bytesWritten]) < 0) return -EIO;
         }
 
-        start_Block_Index++;
+        startBlockIndex++;
+        bytesWritten += chunk;
+        bytesToWrite -= chunk;
+        offset += (off_t) chunk;
     }
 
-    if (write_blks(blockAddr1, 1, blks) < 0) return -EIO;
+    // only write the indirect1 pointer if it was initialized
+    if (indirPtrAddr && write_blks(indirPtrAddr, 1, blks) < 0) return -EIO;
+    // write back the indirect2 data that was modified
     if (write_blks(ctx->inodes[ino].indir2_blks, 1, blks2) < 0) return -EIO;
 
     // update inode and mark dirty
 
     dirty_inode(ino, ctx);
 
-    ctx->inodes[ino].size = offset;
-
-    inode->mtime = inode->atime = time(NULL);
+    ctx->inodes[ino].size = max(ctx->inodes[ino].size, offset);
+    ctx->inodes[ino].mtime = ctx->inodes[ino].atime = time(NULL);
 
     if (bytesToWrite > 0) return -ENOSPC;
 
-    return bytesToWrite;
+    return (int) bytesWritten;
 }
 
 
