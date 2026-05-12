@@ -1883,7 +1883,7 @@ int fsx492_link(const char * oldpath, const char * newpath)
     int out = lookup_path(oldpath, &ino, NULL);
     if(out < 0) return out;
     if(S_ISDIR(ctx->inodex[ino].mode)) return -EPERM;
-    out = lookup_path(newpath, temp_ino, &target_ino);
+    out = lookup_path(newpath, &temp_ino, &target_ino);
     switch (out) {
         case 0:         // the path was found
             return -EEXIST;
