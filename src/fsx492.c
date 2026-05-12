@@ -1544,6 +1544,7 @@ int fsx492_write(const char * path, const char * buf, size_t size,
             if (alloc_res < 0) return alloc_res;
             ctx->inodes[ino].blocks++;
         }
+
          if (bytesToWrite < FSX492_BLKSZ){
 
             if (read_blks(blockAddr, 1, blockBuffer) < 0) return -EIO;
@@ -1554,7 +1555,7 @@ int fsx492_write(const char * path, const char * buf, size_t size,
         } else if (bytesWritten % FSX492_BLKSZ) {
             numW = FSX492_BLKSZ - offset;
             if (read_blks(blockAddr, 1, blockBuffer) < 0) return -EIO;
-            memcpy(blockBuffer, &buf[bytesWritten], FSX492_BLKSZ);
+            memcpy(blockBuffer, &buf[bytesWritten], numW);
             if (write_blks(blockAddr, 1, blockBuffer) < 0) return -EIO;
             bytesWritten += FSX492_BLKSZ - (bytesWritten % FSX492_BLKSZ);
         }  else {
@@ -1577,7 +1578,7 @@ int fsx492_write(const char * path, const char * buf, size_t size,
     if (blockAddr && validate_block(blockAddr, ctx) == -EINVAL && bytesToWrite) {
             const uint32_t alloc_res = alloc_blk(&blockAddr, ctx);
             if (alloc_res < 0) return alloc_res;
-            ctx->inodes[ino].indir1_blks++;
+            ctx->inodes[ino].indir1_blocks++;
         }
     if (read_blks(ctx->inodes[ino].indir1_blks, 1, (void *)blks) < 0) {
         return -EIO;
@@ -1585,22 +1586,30 @@ int fsx492_write(const char * path, const char * buf, size_t size,
 
     while (bytesToWrite && start_Block_Index < FSX492_PTRS_PER_BLK + FSX492_N_DIRECT){
 
-        uint32_t blockAddr = blks[start_Block_Index - FSX492_N_DIRECT];
+        blockAddr = blks[start_Block_Index - FSX492_N_DIRECT];
         if (blockAddr && validate_block(blockAddr, ctx) == -EINVAL) {
             const uint32_t alloc_res = alloc_blk(&blockAddr, ctx);
             if (alloc_res < 0) return alloc_res;
             ctx->inodes[ino].indir1_blks++;
+            blks[start_Block_Index - FSX492_N_DIRECT] = blockAddr;
         }
 
-        if(bytesWritten % FSX492_BLKSZ){
+        if (bytesToWrite < FSX492_BLKSZ){
 
+            if (read_blks(blockAddr, 1, blockBuffer) < 0) return -EIO;
+            memcpy(blockBuffer, &buf[bytesWritten], bytesToWrite);
+            if (write_blks(blockAddr, 1, blockBuffer) < 0) return -EIO;
+            bytesWritten += (bytesToWrite % FSX492_BLKSZ);
+
+        } else if (bytesWritten % FSX492_BLKSZ) {
             numW = FSX492_BLKSZ - offset;
-            if(read_blks(blks[offset/FSX492_BLKSZ - FSX492_N_DIRECT] , 1, blockBuffer)) return -EIO;
+            if (read_blks(blockAddr, 1, blockBuffer) < 0) return -EIO;
             memcpy(blockBuffer, &buf[bytesWritten], numW);
-
-        } else {
-
-
+            if (write_blks(blockAddr, 1, blockBuffer) < 0) return -EIO;
+            bytesWritten += FSX492_BLKSZ - (bytesWritten % FSX492_BLKSZ);
+        }  else {
+            if (write_blks(blockAddr, 1, &buf[bytesWritten]) < 0) return -EIO;
+            bytesWritten += FSX492_BLKSZ;
 
         }
 
