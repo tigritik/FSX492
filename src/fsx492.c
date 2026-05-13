@@ -163,6 +163,7 @@ static inline int clear_blks(uint32_t start, uint32_t n)
  */
 static inline int validate_block(uint32_t blkno, struct context * ctx)
 {
+    if (!blkno) return -EINVAL; // block 0 is invalid - saves lots of headache
     return !FD_ISSET(blkno, ctx->block_map) ? -EINVAL : 0;
 }
 
@@ -332,7 +333,7 @@ static inline size_t _free_last_blks(
     size_t nfreed = 0;
     for (size_t i = 0; nfreed < n && i < len; i++) {
         size_t idx = (len - 1) - i;
-        if (blks[idx] && validate_block(blks[idx], ctx) == 0) {
+        if (validate_block(blks[idx], ctx) == 0) {
             free_blk(blks[idx], ctx);
             blks[idx] = 0;
             nfreed++;
@@ -384,7 +385,7 @@ static inline size_t _free_last_indir1_blks(
     assert(ctx);
     assert(inode);
     assert(inode->blocks > FSX492_N_DIRECT);
-    if (!inode->indir1_blks || validate_block(inode->indir1_blks, ctx) < 0) {
+    if (validate_block(inode->indir1_blks, ctx) < 0) {
         return 0;
     }
 
@@ -432,7 +433,7 @@ static inline size_t _free_last_indir2_blks(
     assert(ctx);
     assert(inode);
     assert(inode->blocks > FSX492_N_DIRECT + FSX492_PTRS_PER_BLK);
-    if (!inode->indir2_blks || validate_block(inode->indir2_blks, ctx) < 0) { //breaks otherwise because super block is zero so validate suceeds
+    if (validate_block(inode->indir2_blks, ctx) < 0) {
         return 0;
     }
 
@@ -448,7 +449,7 @@ static inline size_t _free_last_indir2_blks(
     for (size_t i = 0; i < FSX492_PTRS_PER_BLK; i++) {
         // free blocks in reverse order
         size_t idx = (FSX492_PTRS_PER_BLK - 1) - i;
-        if (!blks2[idx] || validate_block(blks2[idx], ctx) < 0) {
+        if (validate_block(blks2[idx], ctx) < 0) {
             continue;
         }
 
@@ -545,7 +546,7 @@ static int find_entry(
     struct fsx492_dirent direct[FSX492_DIRENTRIES_PER_BLK];
     for(int i = 0; i < FSX492_N_DIRECT; i++){
         uint32_t blk_adr = ctx->inodes[dir_ino].direct_blks[i];
-        if(!blk_adr || validate_block(blk_adr, ctx) == -EINVAL) continue;
+        if(validate_block(blk_adr, ctx) == -EINVAL) continue;
         if(read_blks(blk_adr, 1, direct)) return -EIO;
         ssize_t index = search_block(name, direct);
         if(index >= 0) { 
@@ -835,7 +836,7 @@ static int _link(
     struct fsx492_dirent entries[FSX492_N_DIRECT*FSX492_DIRENTRIES_PER_BLK] = {0};
     for (int i = 0; i < FSX492_N_DIRECT; i++) {
         const uint32_t blockAddr = ctx->inodes[dir_ino].direct_blks[i];
-        if (!blockAddr || validate_block(blockAddr, ctx) == -EINVAL) continue;
+        if (validate_block(blockAddr, ctx) == -EINVAL) continue;
         if (read_blks(blockAddr, 1, &entries[i*FSX492_DIRENTRIES_PER_BLK]) < 0)
             return -EIO;
     }
@@ -860,7 +861,7 @@ static int _link(
     uint32_t modifiedBlockAddr = ctx->inodes[dir_ino].direct_blks[modifiedBlockIdx];
 
     // we need to check if a new block needs to be allocated
-    const int newBlock = !modifiedBlockAddr || validate_block(modifiedBlockAddr, ctx);
+    const int newBlock = validate_block(modifiedBlockAddr, ctx);
 
     if (newBlock) {
         if (alloc_blk(&modifiedBlockAddr, ctx) < 0) return -EIO;
@@ -911,7 +912,7 @@ static int _unlink(
     int blkIdx = -1;
     for (int i = 0; i < FSX492_N_DIRECT; i++) {
         blockAddr = ctx->inodes[dir_ino].direct_blks[i];
-        if (!blockAddr || validate_block(blockAddr, ctx) == -EINVAL) continue;
+        if (validate_block(blockAddr, ctx) == -EINVAL) continue;
         if (read_blks(blockAddr, 1, entries) < 0) return -EIO;
         direntIdx = search_block(name, entries);
         if (direntIdx == -EIO) return -EIO;
@@ -1570,7 +1571,7 @@ int fsx492_write(const char * path, const char * buf, size_t size,
     // write to direct blocks if needed (allocate space as needed)
     while (bytesToWrite  && startBlockIndex < FSX492_N_DIRECT) {
         blockAddr = ctx->inodes[ino].direct_blks[startBlockIndex];
-        if (!blockAddr || validate_block(blockAddr, ctx) == -EINVAL) {
+        if (validate_block(blockAddr, ctx) == -EINVAL) {
             const uint32_t alloc_res = alloc_blk(&blockAddr, ctx);
             if (alloc_res < 0) return (int) alloc_res;
             ctx->inodes[ino].blocks++;
@@ -1605,7 +1606,7 @@ int fsx492_write(const char * path, const char * buf, size_t size,
 
     // if we still have bytes to write but the indirect pointer is invalid
     // then initialize it
-    if (bytesToWrite && (!blockAddr || validate_block(blockAddr, ctx) == -EINVAL)) {
+    if (bytesToWrite && validate_block(blockAddr, ctx) == -EINVAL) {
         const uint32_t alloc_res = alloc_blk(&blockAddr, ctx);
         if (alloc_res < 0) return (int) alloc_res;
         ctx->inodes[ino].indir1_blks = blockAddr;
@@ -1620,7 +1621,7 @@ int fsx492_write(const char * path, const char * buf, size_t size,
     while (bytesToWrite && startBlockIndex < FSX492_PTRS_PER_BLK + FSX492_N_DIRECT){
 
         blockAddr = blks[startBlockIndex - FSX492_N_DIRECT];
-        if (!blockAddr || validate_block(blockAddr, ctx) == -EINVAL) {
+        if (validate_block(blockAddr, ctx) == -EINVAL) {
             const uint32_t alloc_res = alloc_blk(&blockAddr, ctx);
             if (alloc_res < 0) return (int) alloc_res;
             ctx->inodes[ino].blocks++;
@@ -1661,7 +1662,7 @@ int fsx492_write(const char * path, const char * buf, size_t size,
 
     /// if we still have bytes to write but the 2indirect pointer is invalid
     // then initialize it
-    if (bytesToWrite && (!blockAddr || validate_block(blockAddr, ctx) == -EINVAL)) {
+    if (bytesToWrite && validate_block(blockAddr, ctx) == -EINVAL) {
         const uint32_t alloc_res = alloc_blk(&blockAddr, ctx);
         if (alloc_res < 0) return (int) alloc_res;
         ctx->inodes[ino].indir2_blks = blockAddr;
@@ -1686,7 +1687,7 @@ int fsx492_write(const char * path, const char * buf, size_t size,
         indirPtrAddr = blks2[(startBlockIndex - FSX492_PTRS_PER_BLK - FSX492_N_DIRECT) / FSX492_PTRS_PER_BLK];
 
         //if the indirect pointer is invalid then initialize it
-        if (!indirPtrAddr || validate_block(indirPtrAddr, ctx) == -EINVAL) {
+        if (validate_block(indirPtrAddr, ctx) == -EINVAL) {
             const uint32_t alloc_res = alloc_blk(&indirPtrAddr, ctx);
             if (alloc_res < 0) return (int) alloc_res;
             blks2[(startBlockIndex - FSX492_PTRS_PER_BLK - FSX492_N_DIRECT) / FSX492_PTRS_PER_BLK] = indirPtrAddr;
@@ -1699,7 +1700,7 @@ int fsx492_write(const char * path, const char * buf, size_t size,
 
         // notice that we omit subtracting out the number of indirect blocks bc of the mod
         blockAddr = blks1[(startBlockIndex - FSX492_N_DIRECT) % FSX492_PTRS_PER_BLK];
-        if (!blockAddr || validate_block(blockAddr, ctx) == -EINVAL) {
+        if (validate_block(blockAddr, ctx) == -EINVAL) {
             const uint32_t alloc_res = alloc_blk(&blockAddr, ctx);
             if (alloc_res < 0) return (int) alloc_res;
             blks1[(startBlockIndex - (FSX492_N_DIRECT)) % FSX492_PTRS_PER_BLK] = blockAddr;
@@ -2198,7 +2199,7 @@ int fsx492_rmdir(const char * path)
     char notempt = 0;
     for(int i = 0; i < FSX492_N_DIRECT; i++){
         uint32_t blk_adr = ctx->inodes[ino].direct_blks[i];
-        if(blk_adr && !validate_block(blk_adr, ctx)){
+        if(!validate_block(blk_adr, ctx)){
             if(i > 0) {
                 notempt = 1; 
                 break;
