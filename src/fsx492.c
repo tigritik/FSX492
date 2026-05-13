@@ -732,6 +732,7 @@ static int writeback_metadata(struct context * ctx)
         if (write_blks(i, 1, blk) < 0) {
             return -EIO;
         }
+        FD_CLR(i, ctx->ditry_map);
     }
     return 0;
 }
